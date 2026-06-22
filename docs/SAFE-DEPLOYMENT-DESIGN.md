@@ -48,7 +48,7 @@ The installer supports these modes, each with a defined safety contract:
 - `audit` — fully functional, read-only
 - `dry-run` — fully functional, no side effects
 - `status` — partially functional, read-only
-- `deploy` — refuses execution with "not implemented" message
+- `deploy` — fully functional (v0.0.2, requires `--deploy-confirmed` + typed confirmation)
 - `backup` — refuses execution with "not implemented" message
 - `remove` — refuses execution with "not implemented" message
 

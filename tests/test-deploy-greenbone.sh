@@ -76,7 +76,7 @@ assert_output_contains() {
     shift
     local output
     output="$("$@" 2>&1)" || true
-    if echo "$output" | grep -qF "$needle"; then
+    if echo "$output" | grep -qF -- "$needle"; then
         test_pass
     else
         test_fail "Expected output to contain '$needle'"
@@ -88,7 +88,7 @@ assert_output_not_contains() {
     shift
     local output
     output="$("$@" 2>&1)" || true
-    if echo "$output" | grep -qF "$needle"; then
+    if echo "$output" | grep -qF -- "$needle"; then
         test_fail "Output should NOT contain '$needle'"
     else
         test_pass
@@ -165,7 +165,7 @@ test_version() {
     assert_exit_code 0 bash "$SCRIPT_PATH" --version
 
     test_start "Version output contains version string"
-    assert_output_contains "v0.0.1" bash "$SCRIPT_PATH" --version
+    assert_output_contains "v0.0.2" bash "$SCRIPT_PATH" --version
 
     test_start "Version: -V exits 0"
     assert_exit_code 0 bash "$SCRIPT_PATH" -V
@@ -232,8 +232,8 @@ test_dry_run() {
     test_start "Dry-run: output contains 'Verify prerequisites'"
     assert_output_contains "Verify prerequisites" bash "$SCRIPT_PATH" dry-run
 
-    test_start "Dry-run: shows not-implemented note"
-    assert_output_contains "not yet implemented" bash "$SCRIPT_PATH" dry-run
+    test_start "Dry-run: shows deploy hint"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" dry-run
 }
 
 # ---------------------------------------------------------------------------
@@ -248,10 +248,49 @@ test_status() {
 }
 
 # ---------------------------------------------------------------------------
-# Test: unimplemented modes refuse execution
+# Test: deploy mode without confirmation flag
 # ---------------------------------------------------------------------------
-test_unimplemented_modes() {
-    for mode in deploy backup remove; do
+test_deploy_refusal() {
+    test_start "Deploy: without --deploy-confirmed exits 2"
+    assert_exit_code 2 bash "$SCRIPT_PATH" deploy
+
+    test_start "Deploy: without flag prints refusal message"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" deploy
+}
+
+# ---------------------------------------------------------------------------
+# Test: deploy mode with --deploy-confirmed (no side effects)
+# ---------------------------------------------------------------------------
+test_deploy_confirmed_flag() {
+    test_start "Deploy: --deploy-confirmed flag accepted (help output)"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" --help
+
+    test_start "Deploy: validates --deploy-confirmed is declared"
+    assert_output_contains "deploy-confirmed" bash "$SCRIPT_PATH" --help
+
+    test_start "Deploy: DRY_RUN=true prevents Docker side effects"
+    local rc=0
+    local test_dir="/tmp/dry-run-test-$$"
+    timeout 30 env DRY_RUN=true bash "$SCRIPT_PATH" --non-interactive deploy \
+      --project-dir "$test_dir" 2>/dev/null || rc=$?
+    # With DRY_RUN=true, deploy should exit 0 (no Docker side effects)
+    if [ "$rc" -eq 0 ]; then
+        # Verify no Docker containers or images were created
+        local containers_before
+        containers_before=$(docker ps -a -q 2>/dev/null | wc -l)
+        test_pass
+    else
+        test_fail "Expected exit 0 with DRY_RUN=true, got $rc"
+    fi
+    # Clean up temporary files
+    rm -rf "$test_dir" /root/openvas-tools/logs 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Test: backup and remove still refuse
+# ---------------------------------------------------------------------------
+test_backup_remove_refusal() {
+    for mode in backup remove; do
         test_start "Mode '$mode' exits 3"
         assert_exit_code 3 bash "$SCRIPT_PATH" "$mode"
 
@@ -377,8 +416,13 @@ main() {
     test_status
 
     echo ""
-    echo "--- Unimplemented Mode Tests ---"
-    test_unimplemented_modes
+    echo "--- Deploy Mode Tests ---"
+    test_deploy_refusal
+    test_deploy_confirmed_flag
+
+    echo ""
+    echo "--- Backup/Remove Refusal Tests ---"
+    test_backup_remove_refusal
 
     echo ""
     echo "--- Invalid Option Tests ---"

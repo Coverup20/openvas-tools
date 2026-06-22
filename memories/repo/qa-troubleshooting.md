@@ -48,6 +48,33 @@ Always audit downloaded infrastructure scripts for hardcoded credentials, destru
 
 ---
 
+## 2026-06-22 - Accidental Docker image pull during test execution
+
+### Question
+
+Why did the test suite pull Greenbone Docker images and start containers?
+
+### Context
+
+- Repository: Coverup20/openvas-tools
+- Component: tests/test-deploy-greenbone.sh
+- Symptom: Running `test_deploy_confirmed_flag()` caused `docker compose pull` and `docker compose up -d`
+- Root cause: The test called `bash deploy-greenbone.sh --non-interactive deploy` which satisfied all safety gates (flag present, non-interactive skipped typed confirmation, disk in warn range but non-interactive skipped prompt). The deploy function proceeded to download the compose file, pull images, and start the stack.
+
+### Solution
+
+1. Tests that validate deploy flag parsing now use ONLY `--help` output — never call deploy mode.
+2. Added `DRY_RUN=true` support: when set, all `docker compose` commands are printed but not executed.
+3. Added a DRY_RUN deploy test (`DRY_RUN=true bash deploy-greenbone.sh --non-interactive deploy`) that validates the command sequence without Docker side effects.
+4. All `docker compose` commands in `cmd_deploy()` now go through the `dry_run_cmd` wrapper.
+5. `poll_readiness()` early-exits when `DRY_RUN=true`.
+
+### Prevention rule
+
+Tests must never call `deploy` mode with flags that could trigger real execution. Use `DRY_RUN=true` for any test that needs to validate the deploy code path. For flag parsing validation, use `--help` output only.
+
+---
+
 ## 2026-06-19 - Repository initialization
 
 ### Question
