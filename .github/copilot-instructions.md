@@ -10,7 +10,21 @@
 - Do not start work without reading and understanding the instructions.
 
 **MANDATORY: At the start of every conversation, use the memory tool to read these repository memory files:**
-- `memories/repo/git-push-policy.md` — Git commit format, versioning (v0.0.x), tag + release workflow
+- `memories/repo/git-push-policy.md` — Git commit format, versioning (v0.0.X PATCH progression), tag + release workflow
+
+### MANDATORY VERSION CLASSIFICATION AND PATCH PROGRESSION
+
+For fixes, maintenance changes, policy updates, documentation corrections,
+backward-compatible refactors, validation improvements, and internal
+operational hardening, increment PATCH only.
+
+Required sequence:
+v1.0.0 → v1.0.1 → ... → v1.0.9 → v1.0.10 → v1.0.11
+
+Do not increment MINOR unless a real new backward-compatible feature has
+been explicitly classified and approved as a MINOR release.
+
+Never abbreviate v1.0.10 as v1.10.
 - `memories/repo/hosts-access.md` — SSH access methods per host
 - `memories/repo/scripts-index.md` — Index of all scripts and their purpose
 

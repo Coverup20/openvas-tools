@@ -1,5 +1,12 @@
 # Scripts index
 
+## Existing scripts
+
+| Script | Path | Description | Status |
+|---|---|---|---|
+| `deploy-greenbone.sh` | `install/deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (audit + dry-run modes functional) |
+| `test-deploy-greenbone.sh` | `tests/test-deploy-greenbone.sh` | Test suite for deploy-greenbone.sh | Development (46 tests) |
+
 ## Planned scripts (not yet created)
 
 | Script | Path | Description |
