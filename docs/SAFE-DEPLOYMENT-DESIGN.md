@@ -39,7 +39,9 @@ The installer supports these modes, each with a defined safety contract:
 | `audit` | Yes | Yes | **Phase 1** — system readiness check |
 | `dry-run` | Yes | Yes | **Phase 1** — planned execution preview |
 | `status` | Yes | Yes | **Phase 1** — current stack state |
-| `deploy` | TBD | No | **Future** — full deployment |
+| `deploy` | Yes | No | **Phase 1** — full deployment |
+| `update-feed` | Yes | No | **Phase 1** — update feed/data services only |
+| `change-admin-password` | Yes | No | **Phase 1** — interactive admin password change |
 | `backup` | TBD | No | **Future** — database and config backup |
 | `remove` | N/A | No | **Future** — safe teardown with backup gate |
 
@@ -48,7 +50,9 @@ The installer supports these modes, each with a defined safety contract:
 - `audit` — fully functional, read-only
 - `dry-run` — fully functional, no side effects
 - `status` — partially functional, read-only
-- `deploy` — fully functional (v0.0.2, requires `--deploy-confirmed` + typed confirmation)
+- `deploy` — fully functional (v0.0.4, requires `--deploy-confirmed` + typed confirmation)
+- `update-feed` — fully functional (v0.0.4, requires `--feed-update-confirmed` + typed confirmation)
+- `change-admin-password` — fully functional (v0.0.4, interactive only)
 - `backup` — refuses execution with "not implemented" message
 - `remove` — refuses execution with "not implemented" message
 

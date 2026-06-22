@@ -4,8 +4,8 @@
 
 | Script | Path | Description | Status |
 |---|---|---|---|
-| `deploy-greenbone.sh` | `install/deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (v0.0.2 — audit, dry-run, deploy modes) |
-| `test-deploy-greenbone.sh` | `tests/test-deploy-greenbone.sh` | Test suite for deploy-greenbone.sh | Development (49 tests) |
+| `deploy-greenbone.sh` | `install/deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (v0.0.4 — audit, dry-run, deploy, update-feed, change-admin-password modes) |
+| `test-deploy-greenbone.sh` | `tests/test-deploy-greenbone.sh` | Test suite for deploy-greenbone.sh | Development (update-feed + change-admin-password tests added) |
 
 ## Planned scripts (not yet created)
 

@@ -6,7 +6,7 @@ Deployment and preparation scripts for Greenbone Community Edition.
 
 | Path | Description | Status |
 |---|---|---|
-| `deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (v0.0.2 — audit, dry-run, deploy modes functional) |
+| `deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (v0.0.4 — audit, dry-run, deploy, update-feed, change-admin-password modes functional) |
 | `setup-host.sh` | Ubuntu host preparation (Docker, dependencies, kernel params) | Planned |
 | `deploy-stack.sh` | Greenbone stack deployment and initial configuration | Planned |
 
@@ -22,6 +22,8 @@ Development is on branch `feat/greenbone-deploy-mode`. See `docs/SAFE-DEPLOYMENT
 | `dry-run` | Planned deployment sequence without execution | 0 |
 | `status` | Read-only current stack state | 0 |
 | `deploy` | Full deploy (requires `--deploy-confirmed` + typed confirmation) | 0 |
+| `update-feed` | Update feed/data services (requires `--feed-update-confirmed`) | 0 |
+| `change-admin-password` | Interactive admin password change | 0 |
 | `backup` | NOT IMPLEMENTED | 3 |
 | `remove` | NOT IMPLEMENTED | 3 |
 

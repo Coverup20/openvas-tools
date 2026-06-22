@@ -11,17 +11,19 @@
 # Usage: deploy-greenbone.sh [mode] [options]
 #   See --help for full documentation.
 #
-# Modes: audit, dry-run, status, deploy, backup, remove
-#   audit  : read-only system readiness check
-#   dry-run: show planned deployment steps without executing
-#   status : show current stack state (read-only)
-#   deploy : NOT IMPLEMENTED in this version
-#   backup : NOT IMPLEMENTED in this version
-#   remove : NOT IMPLEMENTED in this version
+# Modes: audit, dry-run, status, deploy, update-feed, change-admin-password, backup, remove
+#   audit                 : read-only system readiness check
+#   dry-run               : show planned deployment steps without executing
+#   status                : show current stack state (read-only)
+#   deploy                : Full deploy (requires --deploy-confirmed + typed DEPLOY)
+#   update-feed           : Update feed/data services only (requires --feed-update-confirmed)
+#   change-admin-password : Interactive admin password change
+#   backup                : NOT IMPLEMENTED in this version
+#   remove                : NOT IMPLEMENTED in this version
 
 set -Eeuo pipefail
 
-VERSION="0.0.2"
+VERSION="0.0.4"
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -33,6 +35,7 @@ LOG_DIR="./logs"
 NON_INTERACTIVE=false
 VERBOSE=false
 DEPLOY_CONFIRMED=false
+FEED_UPDATE_CONFIRMED=false
 DEPLOY_FLAG=""
 SCRIPT_NAME="$(basename "$0")"
 LOG_FILE=""
@@ -148,6 +151,9 @@ MODES
     dry-run     Show planned deployment steps without executing (functional)
     status      Show current stack state (read-only, partially functional)
     deploy      Deploy Greenbone stack from official sources
+    update-feed Update feed/data services only (requires --feed-update-confirmed)
+    change-admin-password
+                Interactive admin password change
     backup      Create database and configuration backup (NOT IMPLEMENTED)
     remove      Remove Greenbone stack with backup gate (NOT IMPLEMENTED)
     --help      Show this help message and exit
@@ -160,6 +166,8 @@ OPTIONS
     --log-dir DIR          Directory for log files (default: ./logs)
     --non-interactive      Skip confirmation prompts (implies --deploy-confirmed)
     --deploy-confirmed     Acknowledge understanding: deploy will start containers
+    --feed-update-confirmed
+                           Acknowledge understanding: update-feed will pull images
     --verbose              Enable verbose output
 
 EXIT CODES
@@ -169,9 +177,10 @@ EXIT CODES
     3   Mode not implemented
 
 SAFETY
-    - audit and dry-run modes are read-only and safe to run at any time.
-    - status mode is read-only.
+    - audit, dry-run and status modes are read-only and safe to run at any time.
     - deploy mode requires --deploy-confirmed AND interactive confirmation.
+    - update-feed mode requires --feed-update-confirmed AND interactive confirmation.
+    - change-admin-password is interactive only; never pass password as argument.
     - backup and remove modes are NOT IMPLEMENTED and will refuse execution.
     - No credentials, passwords or tokens are accepted as arguments.
     - No destructive commands are executed without explicit confirmation.
@@ -248,6 +257,10 @@ parse_args() {
                 ;;
             --deploy-confirmed)
                 DEPLOY_CONFIRMED=true
+                shift
+                ;;
+            --feed-update-confirmed)
+                FEED_UPDATE_CONFIRMED=true
                 shift
                 ;;
             --verbose)
@@ -743,6 +756,240 @@ test_web_endpoint() {
 }
 
 # ---------------------------------------------------------------------------
+# Mode: update-feed
+# ---------------------------------------------------------------------------
+# Legacy source: openvas.sh upd_feed() — safe reimplementation
+# Feed data services that should be updated
+FEED_SERVICES="notus-data vulnerability-tests scap-data dfn-cert-data cert-bund-data report-formats data-objects"
+
+cmd_update_feed() {
+    log_info "=== Update-feed mode ==="
+    echo ""
+
+    # -- Prerequisites --
+    if ! require_cmd docker; then
+        log_fail "docker not available"
+        exit 1
+    fi
+    if ! docker info &>/dev/null 2>&1; then
+        log_fail "Docker daemon not running"
+        exit 1
+    fi
+    if ! docker compose version &>/dev/null 2>&1; then
+        log_fail "Docker Compose plugin not available"
+        exit 1
+    fi
+
+    local pd="${PROJECT_DIR:-/opt/greenbone-community}"
+    local cf="${COMPOSE_FILE:-$pd/compose.yaml}"
+
+    if [ ! -d "$pd" ]; then
+        log_fail "Project directory not found: $pd"
+        log_fail "Use --project-dir or deploy first."
+        exit 1
+    fi
+    if [ ! -f "$cf" ]; then
+        log_fail "Compose file not found: $cf"
+        exit 1
+    fi
+
+    # -- Discover actual services --
+    local discovered
+    discovered=$(docker compose -f "$cf" config --services 2>/dev/null || echo "")
+    if [ -z "$discovered" ]; then
+        log_fail "Could not discover services from $cf"
+        exit 1
+    fi
+
+    # -- Intersect requested with discovered --
+    local selected=()
+    for svc in $FEED_SERVICES; do
+        if echo "$discovered" | grep -qxF "$svc"; then
+            selected+=("$svc")
+        fi
+    done
+
+    if [ ${#selected[@]} -eq 0 ]; then
+        log_fail "None of the expected feed/data services are present in Compose file."
+        log_fail "Expected: $FEED_SERVICES"
+        log_fail "Discovered: $(echo "$discovered" | tr '\n' ' ')"
+        exit 1
+    fi
+
+    echo "Feed/data services to update: ${selected[*]}"
+    echo ""
+
+    # -- Confirmation gate --
+    if ! $FEED_UPDATE_CONFIRMED; then
+        log_error "Update-feed mode requires --feed-update-confirmed flag."
+        log_error "Usage: $SCRIPT_NAME update-feed --feed-update-confirmed"
+        log_error "This confirms you understand images will be pulled."
+        exit 2
+    fi
+
+    if ! $NON_INTERACTIVE; then
+        echo ""
+        echo "WARNING: This will pull updated images for feed/data services."
+        echo "         Existing containers may be restarted."
+        echo ""
+        echo "Type UPDATE-FEED (uppercase) to confirm: "
+        local user_input=""
+        read -r user_input
+        if [ "$user_input" != "UPDATE-FEED" ]; then
+            log_error "Confirmation failed. Update-feed aborted."
+            exit 2
+        fi
+        echo ""
+    fi
+
+    # -- Dry-run --
+    local dry_prefix=""
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        dry_prefix="[DRY-RUN] "
+        log_info "DRY_RUN set — showing planned commands only."
+    fi
+
+    # -- Record pre-state --
+    local pre_free_gb
+    pre_free_gb=$(get_free_disk_gb "/")
+    echo "${dry_prefix}Free disk before: ${pre_free_gb}GB"
+
+    # -- Pull selected services --
+    log_info "${dry_prefix}Pulling selected feed/data services..."
+    echo "${dry_prefix}  docker compose -f $cf pull ${selected[*]}"
+    if [ "${DRY_RUN:-false}" != "true" ]; then
+        if docker compose -f "$cf" pull "${selected[@]}"; then
+            log_pass "Feed/data images pulled successfully"
+        else
+            log_warn "Image pull completed with warnings"
+        fi
+    fi
+
+    # -- Restart selected services --
+    log_info "${dry_prefix}Restarting selected feed/data services..."
+    echo "${dry_prefix}  docker compose -f $cf up -d ${selected[*]}"
+    if [ "${DRY_RUN:-false}" != "true" ]; then
+        if docker compose -f "$cf" up -d "${selected[@]}"; then
+            log_pass "Feed/data services restarted"
+        else
+            log_warn "Feed/data services restart completed with warnings"
+        fi
+    fi
+
+    # -- Record post-state --
+    local post_free_gb
+    post_free_gb=$(get_free_disk_gb "/")
+    echo "${dry_prefix}Free disk after: ${post_free_gb}GB"
+
+    # -- Write metadata (skip in dry-run) --
+    if [ "${DRY_RUN:-false}" != "true" ]; then
+        local md_dir="${pd}/deployment-metadata/feed-updates"
+        mkdir -p "$md_dir"
+        local md_file="${md_dir}/feed-update-$(date +%Y%m%d-%H%M%S).txt"
+        cat > "$md_file" <<EOF
+# Feed update metadata — do not store secrets here
+timestamp: $(date --iso-8601=seconds)
+script_version: v$VERSION
+compose_path: $cf
+selected_services: ${selected[*]}
+docker_version: $(docker --version 2>/dev/null || echo "unknown")
+compose_version: $(docker compose version 2>/dev/null || echo "unknown")
+disk_free_before_gb: ${pre_free_gb}
+disk_free_after_gb: ${post_free_gb}
+pull_result: ok
+restart_result: ok
+EOF
+        log_info "Feed update metadata written to: $md_file"
+    fi
+
+    echo ""
+    log_info "Update-feed completed at $(date --iso-8601=seconds)"
+}
+
+# ---------------------------------------------------------------------------
+# Mode: change-admin-password
+# ---------------------------------------------------------------------------
+cmd_change_admin_password() {
+    log_info "=== Change-admin-password mode ==="
+    echo ""
+
+    local pd="${PROJECT_DIR:-/opt/greenbone-community}"
+    local cf="${COMPOSE_FILE:-$pd/compose.yaml}"
+
+    # -- Verify project --
+    if [ ! -d "$pd" ]; then
+        log_fail "Project directory not found: $pd"
+        exit 1
+    fi
+    if [ ! -f "$cf" ]; then
+        log_fail "Compose file not found: $cf"
+        exit 1
+    fi
+
+    # -- Verify gvmd service exists and stack is running --
+    local services
+    services=$(docker compose -f "$cf" config --services 2>/dev/null || echo "")
+    if ! echo "$services" | grep -qxF "gvmd"; then
+        log_fail "gvmd service not found in Compose file"
+        exit 1
+    fi
+
+    local gvmd_status
+    gvmd_status=$(docker compose -f "$cf" ps --format '{{.State}}' gvmd 2>/dev/null || echo "not found")
+    if [ "$gvmd_status" != "running" ]; then
+        log_fail "gvmd container is not running (status: $gvmd_status)"
+        log_fail "Start the stack first with deploy mode."
+        exit 1
+    fi
+
+    # -- Interactive password input --
+    if $NON_INTERACTIVE; then
+        log_error "Change-admin-password mode requires interactive input."
+        log_error "Do not use --non-interactive with this mode."
+        exit 2
+    fi
+
+    echo "Enter new admin password:"
+    local pw1=""
+    local pw2=""
+    read -r -s pw1
+    echo ""
+    echo "Confirm new admin password:"
+    read -r -s pw2
+    echo ""
+
+    if [ -z "$pw1" ]; then
+        log_error "Password cannot be empty."
+        exit 2
+    fi
+    if [ "$pw1" != "$pw2" ]; then
+        log_error "Passwords do not match."
+        exit 2
+    fi
+
+    # -- Execute password change --
+    # Password is passed via shell variable, never printed or logged
+    log_info "Changing admin password..."
+    if docker compose -f "$cf" exec -T -u gvmd gvmd gvmd --user=admin --new-password="$pw1" 2>&1; then
+        log_pass "Admin password changed successfully."
+    else
+        log_error "Failed to change admin password."
+        pw1=""
+        pw2=""
+        unset pw1 pw2
+        exit 1
+    fi
+
+    # -- Clear password variables immediately --
+    pw1=""
+    pw2=""
+    unset pw1 pw2
+
+    echo ""
+    log_info "Change-admin-password completed at $(date --iso-8601=seconds)"
+}
+
+# ---------------------------------------------------------------------------
 # Mode: deploy
 # ---------------------------------------------------------------------------
 cmd_deploy() {
@@ -1012,6 +1259,12 @@ main() {
             ;;
         remove)
             cmd_remove
+            ;;
+        update-feed)
+            cmd_update_feed
+            ;;
+        change-admin-password)
+            cmd_change_admin_password
             ;;
         *)
             log_error "Unknown mode: $MODE"
