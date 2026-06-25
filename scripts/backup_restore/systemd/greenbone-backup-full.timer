@@ -1,0 +1,10 @@
+[Unit]
+Description=Run Greenbone Full DR Backup (bi-weekly)
+
+[Timer]
+OnCalendar=Mon *-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=2h
+
+[Install]
+WantedBy=timers.target
