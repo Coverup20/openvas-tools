@@ -216,14 +216,13 @@ def install_backup():
     if not confirm("Install backup system?"):
         return
 
-    # Delegate to install-backup.sh for the heavy lifting
-    script = download("install/install-backup.sh")
-    r = run(["bash", script])
+    # Delegate to greenbone_install_backup.py for the heavy lifting
+    script = download("scripts/greenbone_install_backup.py")
+    r = run([sys.executable, script, "--install"])
     os.unlink(script)
     if r.returncode != 0:
         fail("Backup installation failed")
         return
-
     ok("Backup system installed")
 
     # DO Spaces (interactive, pure Python)

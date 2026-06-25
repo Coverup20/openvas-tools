@@ -38,8 +38,9 @@ Goals:
   - Supports `--remote NAME:BUCKET` and `--rclone-config PATH`.
   - No secrets printed. No backup/upload performed.
 
-- scripts/backup_restore/install-greenbone-backup.sh
-  - Deploy/install script for the target VM. Creates directories, installs scripts, systemd units, and env file.
+- scripts/greenbone_install_backup.py
+  - Python-native installer: creates directories, copies scripts, writes env and systemd units.
+  - Timers disabled by default. Upload disabled by default.
 
 ## Defaults
 
@@ -85,15 +86,15 @@ Goals:
 
 ## Deployment on openvas-greenbone
 
-Use the install script from the repository root:
+Use the Python installer:
 
 ```bash
-sudo bash scripts/backup_restore/install-greenbone-backup.sh
+sudo python3 scripts/greenbone_install_backup.py --install
 ```
 
 This creates directories, installs Python scripts under `/opt/greenbone-backup/scripts/`,
-installs systemd units, and creates the env file from example. Upload is disabled
-by default (`GREENBONE_BACKUP_UPLOAD=0`).
+installs systemd units, and creates the env file. Upload is disabled
+by default (`GREENBONE_BACKUP_UPLOAD=0`). Timers are disabled by default.
 
 ### Configure rclone credentials (primary path — interactive DO/AWS setup)
 
@@ -131,10 +132,10 @@ mkdir -p ~/.config/rclone
 sudo systemctl enable --now greenbone-backup-job00.timer
 ```
 
-Or re-run the install script:
+Or re-run the Python installer:
 
 ```bash
-sudo bash scripts/backup_restore/install-greenbone-backup.sh --enable-timer
+sudo python3 scripts/greenbone_install_backup.py --install --enable-timers
 ```
 
 ### Test local backup (no upload)
