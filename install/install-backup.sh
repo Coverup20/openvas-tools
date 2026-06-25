@@ -43,7 +43,7 @@ else
 fi
 
 # GitHub raw URL for curl fallback when repo is not cloned locally
-REPO_BASE_URL="https://raw.githubusercontent.com/Coverup20/openvas-tools/main"
+REPO_BASE_URL="https://raw.githubusercontent.com/Coverup20/openvas-tools/feat/greenbone-deploy-mode"
 
 BACKUP_DIR="/opt/greenbone-backup"
 SCRIPTS_DIR="$BACKUP_DIR/scripts"
