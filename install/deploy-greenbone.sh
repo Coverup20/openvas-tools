@@ -11,19 +11,20 @@
 # Usage: deploy-greenbone.sh [mode] [options]
 #   See --help for full documentation.
 #
-# Modes: audit, dry-run, status, deploy, update-feed, change-admin-password, backup, remove
+# Modes: audit, dry-run, status, deploy, update-feed, change-admin-password, setup-host, backup, remove
 #   audit                 : read-only system readiness check
 #   dry-run               : show planned deployment steps without executing
 #   status                : show current stack state (read-only)
 #   deploy                : Full deploy (requires --deploy-confirmed + typed DEPLOY)
 #   update-feed           : Update feed/data services only (requires --feed-update-confirmed)
 #   change-admin-password : Interactive admin password change
+#   setup-host            : Interactive host preparation (Docker, repo)
 #   backup                : NOT IMPLEMENTED in this version
 #   remove                : NOT IMPLEMENTED in this version
 
 set -Eeuo pipefail
 
-VERSION="0.0.4"
+VERSION="0.0.5"
 
 # ---------------------------------------------------------------------------
 # Defaults
@@ -154,6 +155,7 @@ MODES
     update-feed Update feed/data services only (requires --feed-update-confirmed)
     change-admin-password
                 Interactive admin password change
+    setup-host  Interactive host preparation (Docker, Compose, repository clone)
     backup      Create database and configuration backup (NOT IMPLEMENTED)
     remove      Remove Greenbone stack with backup gate (NOT IMPLEMENTED)
     --help      Show this help message and exit
@@ -181,6 +183,7 @@ SAFETY
     - deploy mode requires --deploy-confirmed AND interactive confirmation.
     - update-feed mode requires --feed-update-confirmed AND interactive confirmation.
     - change-admin-password is interactive only; never pass password as argument.
+    - setup-host is interactive unless --non-interactive is set.
     - backup and remove modes are NOT IMPLEMENTED and will refuse execution.
     - No credentials, passwords or tokens are accepted as arguments.
     - No destructive commands are executed without explicit confirmation.
@@ -1235,6 +1238,242 @@ cmd_remove() {
 }
 
 # ---------------------------------------------------------------------------
+# Mode: setup-host (interactive)
+# ---------------------------------------------------------------------------
+cmd_setup_host() {
+    log_info "=== Setup-host mode ==="
+    echo ""
+
+    # -- Detect OS --
+    read -r os_name kernel arch <<< "$(detect_os)"
+    log_info "Detected OS: $os_name ($kernel $arch)"
+    echo ""
+
+    # -- Confirmation gate --
+    if ! $NON_INTERACTIVE; then
+        echo "WARNING: This will install packages and clone repositories on this system."
+        echo "         Review what will be installed before proceeding."
+        echo ""
+        echo "Type SETUP (uppercase) to confirm: "
+        local user_input=""
+        read -r user_input
+        if [ "$user_input" != "SETUP" ]; then
+            log_error "Confirmation failed. Setup aborted."
+            exit 2
+        fi
+        echo ""
+    fi
+
+    # -- Safety: DRY_RUN --
+    local dry=""
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        dry="[DRY-RUN] "
+        log_info "DRY_RUN is set — showing planned steps only."
+        echo ""
+    fi
+
+    # -- Step 1: Update package lists --
+    log_info "${dry}Step 1/6: Updating package lists..."
+    if [ -z "$dry" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+        if DEBIAN_FRONTEND=noninteractive apt-get update -qq; then
+            log_pass "Package lists updated"
+        else
+            log_warn "Package list update had warnings"
+        fi
+    else
+        echo "${dry}  apt-get update"
+    fi
+
+    # -- Step 2: Install base packages --
+    log_info "${dry}Step 2/6: Installing base packages (curl, git, gnupg, qemu-guest-agent)..."
+    if ! $NON_INTERACTIVE; then
+        echo ""
+        echo "Packages to install: ca-certificates curl gnupg git openssh-server qemu-guest-agent"
+        echo "Proceed with installation? (y/N): "
+        local pkg_confirm=""
+        read -r pkg_confirm
+        if [ "$pkg_confirm" != "y" ] && [ "$pkg_confirm" != "Y" ]; then
+            log_error "Package installation cancelled."
+            exit 2
+        fi
+    fi
+
+    if [ -z "$dry" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+        echo "${dry}  Installing packages..."
+        if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ca-certificates curl gnupg git openssh-server qemu-guest-agent 2>&1; then
+            log_pass "Base packages installed"
+        else
+            log_warn "Package installation had warnings"
+        fi
+    else
+        echo "${dry}  apt-get install -y ca-certificates curl gnupg git openssh-server qemu-guest-agent"
+    fi
+
+    # -- Step 3: Enable SSH (if not already) --
+    log_info "${dry}Step 3/6: Ensuring SSH is enabled..."
+    if [ -z "$dry" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+        if systemctl enable --now ssh 2>/dev/null; then
+            log_pass "SSH server enabled and running"
+        else
+            log_warn "Could not enable SSH (may already be running)"
+        fi
+    else
+        echo "${dry}  systemctl enable --now ssh"
+    fi
+
+    # -- Step 4: Install Docker Engine + Compose --
+    log_info "${dry}Step 4/6: Installing Docker Engine and Docker Compose plugin..."
+    if require_cmd docker && docker info &>/dev/null 2>&1; then
+        log_pass "Docker already installed and running: $(docker --version 2>/dev/null || echo "unknown")"
+        log_pass "Compose: $(docker compose version 2>/dev/null || echo "unknown")"
+    else
+        if ! $NON_INTERACTIVE; then
+            echo ""
+            echo "Docker Engine will be installed from https://download.docker.com"
+            echo "Proceed with Docker installation? (y/N): "
+            local docker_confirm=""
+            read -r docker_confirm
+            if [ "$docker_confirm" != "y" ] && [ "$docker_confirm" != "Y" ]; then
+                log_error "Docker installation cancelled."
+                exit 2
+            fi
+        fi
+
+        if [ -z "$dry" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+            echo "${dry}  Adding Docker GPG key and repository..."
+            install -m 0755 -d /etc/apt/keyrings
+            curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc 2>/dev/null
+            chmod a+r /etc/apt/keyrings/docker.asc
+            echo "deb [arch=$(dpkg --print-architecture 2>/dev/null || echo "amd64") signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu noble stable" > /etc/apt/sources.list.d/docker.list
+
+            echo "${dry}  Installing Docker packages..."
+            DEBIAN_FRONTEND=noninteractive apt-get update -qq
+            if DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>&1; then
+                log_pass "Docker packages installed"
+                systemctl enable --now docker 2>/dev/null || true
+            else
+                log_fail "Docker installation failed"
+                exit 1
+            fi
+        else
+            echo "${dry}  docker compose version"
+        fi
+
+        # Verify installation
+        if [ -z "$dry" ] && [ "${DRY_RUN:-false}" != "true" ]; then
+            if docker --version &>/dev/null && docker compose version &>/dev/null; then
+                log_pass "Docker: $(docker --version 2>/dev/null)"
+                log_pass "Compose: $(docker compose version 2>/dev/null)"
+            else
+                log_fail "Docker verification failed — check installation"
+                exit 1
+            fi
+        fi
+    fi
+
+    # -- Step 5: Clone openvas-tools repository --
+    local repo_dir="/root/openvas-tools"
+    log_info "${dry}Step 5/6: Preparing repository at $repo_dir..."
+
+    if [ -d "$repo_dir" ]; then
+        log_info "Repository already exists at $repo_dir"
+        local repo_remote
+        repo_remote=$(cd "$repo_dir" && git remote get-url origin 2>/dev/null || echo "none")
+        log_info "Remote: $repo_remote"
+        local repo_head
+        repo_head=$(cd "$repo_dir" && git log --oneline -1 2>/dev/null || echo "unknown")
+        log_info "HEAD: $repo_head"
+    else
+        if ! $NON_INTERACTIVE; then
+            echo ""
+            echo "Repository will be cloned to: $repo_dir"
+            echo "Proceed with clone? (y/N): "
+            local clone_confirm=""
+            read -r clone_confirm
+            if [ "$clone_confirm" != "y" ] && [ "$clone_confirm" != "Y" ]; then
+                log_info "Repository clone skipped."
+            else
+                _do_clone_repo "$repo_dir" "$dry"
+            fi
+        else
+            _do_clone_repo "$repo_dir" "$dry"
+        fi
+    fi
+
+    # -- Step 6: Summary --
+    echo ""
+    log_info "${dry}Step 6/6: Setup summary..."
+    echo ""
+    echo "  OS:        $os_name $kernel $arch"
+    if require_cmd docker; then
+        echo "  Docker:    $(docker --version 2>/dev/null || echo "not installed")"
+    else
+        echo "  Docker:    not installed"
+    fi
+    if docker compose version &>/dev/null 2>&1; then
+        echo "  Compose:   $(docker compose version 2>/dev/null || echo "not installed")"
+    else
+        echo "  Compose:   not installed"
+    fi
+    echo "  Git:       $(git --version 2>/dev/null || echo "not installed")"
+    if [ -d "$repo_dir" ]; then
+        echo "  Repo:      $repo_dir ($(cd "$repo_dir" && git log --oneline -1 2>/dev/null || echo "unknown"))"
+    else
+        echo "  Repo:      not cloned"
+    fi
+    if command -v qemu-guest-agent &>/dev/null; then
+        echo "  QEMU GA:   installed"
+    fi
+    echo ""
+
+    log_info "Setup-host completed at $(date --iso-8601=seconds)"
+}
+
+# Helper: clone openvas-tools repo (attempt clone, fallback to bundle-like message)
+_do_clone_repo() {
+    local repo_dir="$1"
+    local dry="$2"
+    local repo_url="https://github.com/Coverup20/openvas-tools.git"
+
+    if [ -n "$dry" ] && [ "${DRY_RUN:-false}" = "true" ]; then
+        echo "${dry}  git clone $repo_url $repo_dir"
+        echo "${dry}  (or use git bundle if no HTTPS credentials)"
+        return 0
+    fi
+
+    # Try HTTPS clone first
+    if git clone "$repo_url" "$repo_dir" 2>/dev/null; then
+        log_pass "Repository cloned from $repo_url"
+        return 0
+    fi
+
+    # HTTPS failed - suggest alternative
+    log_warn "HTTPS clone failed (no GitHub credentials available on this host)."
+    echo ""
+    echo "  Alternative methods:"
+    echo "  1. Git bundle (from a machine that has repo access):"
+    echo "     git bundle create /tmp/openvas-tools.bundle --all"
+    echo "     scp /tmp/openvas-tools.bundle root@<this_host>:/tmp/"
+    echo "     git clone /tmp/openvas-tools.bundle $repo_dir"
+    echo "     cd $repo_dir"
+    echo "     git remote add origin $repo_url"
+    echo ""
+    echo "  2. Manual: scp/clone the repository to $repo_dir"
+    echo ""
+
+    if ! $NON_INTERACTIVE; then
+        echo "Do you want to continue without cloning? (y/N): "
+        local skip_input=""
+        read -r skip_input
+        if [ "$skip_input" != "y" ] && [ "$skip_input" != "Y" ]; then
+            log_error "Repository required. Please provide access and retry."
+            exit 1
+        fi
+    fi
+    log_info "Continuing without repository clone."
+}
+
+# ---------------------------------------------------------------------------
 # Main dispatch
 # ---------------------------------------------------------------------------
 main() {
@@ -1265,6 +1504,9 @@ main() {
             ;;
         change-admin-password)
             cmd_change_admin_password
+            ;;
+        setup-host)
+            cmd_setup_host
             ;;
         *)
             log_error "Unknown mode: $MODE"

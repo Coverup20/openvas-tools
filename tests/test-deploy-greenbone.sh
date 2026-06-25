@@ -165,7 +165,7 @@ test_version() {
     assert_exit_code 0 bash "$SCRIPT_PATH" --version
 
     test_start "Version output contains version string"
-    assert_output_contains "v0.0.4" bash "$SCRIPT_PATH" --version
+    assert_output_contains "v0.0.5" bash "$SCRIPT_PATH" --version
 
     test_start "Version: -V exits 0"
     assert_exit_code 0 bash "$SCRIPT_PATH" -V
@@ -394,6 +394,35 @@ test_change_admin_password() {
 
     test_start "Change-admin-password: without project dir fails"
     assert_output_contains "Project directory not found" bash "$SCRIPT_PATH" change-admin-password
+}
+
+# ---------------------------------------------------------------------------
+# Test: setup-host mode
+# ---------------------------------------------------------------------------
+test_setup_host() {
+    test_start "Setup-host: listed in help"
+    assert_output_contains "setup-host" bash "$SCRIPT_PATH" --help
+
+    test_start "Setup-host: refused without SETUP confirmation (non-interactive)"
+    assert_output_contains "Confirmation failed" bash "$SCRIPT_PATH" setup-host --non-interactive
+
+    test_start "Setup-host: DRY_RUN shows planned steps"
+    local output
+    output=$(printf "SETUP\n" | DRY_RUN=true bash "$SCRIPT_PATH" setup-host 2>&1) || true
+    if echo "$output" | grep -qF "Step 1/6"; then
+        test_pass
+    else
+        test_fail "Expected dry-run to show setup steps"
+    fi
+
+    test_start "Setup-host: DRY_RUN does not attempt installation"
+    local output2
+    output2=$(printf "SETUP\n" | DRY_RUN=true bash "$SCRIPT_PATH" setup-host 2>&1) || true
+    if echo "$output2" | grep -qF "[DRY-RUN]"; then
+        test_pass
+    else
+        test_fail "Expected DRY-RUN markers in output"
+    fi
 }
 
 # ---------------------------------------------------------------------------

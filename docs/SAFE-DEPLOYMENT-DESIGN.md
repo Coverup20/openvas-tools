@@ -42,6 +42,7 @@ The installer supports these modes, each with a defined safety contract:
 | `deploy` | Yes | No | **Phase 1** — full deployment |
 | `update-feed` | Yes | No | **Phase 1** — update feed/data services only |
 | `change-admin-password` | Yes | No | **Phase 1** — interactive admin password change |
+| `setup-host` | Yes | No | **Phase 1** — interactive host preparation |
 | `backup` | TBD | No | **Future** — database and config backup |
 | `remove` | N/A | No | **Future** — safe teardown with backup gate |
 
@@ -52,7 +53,8 @@ The installer supports these modes, each with a defined safety contract:
 - `status` — partially functional, read-only
 - `deploy` — fully functional (v0.0.4, requires `--deploy-confirmed` + typed confirmation)
 - `update-feed` — fully functional (v0.0.4, requires `--feed-update-confirmed` + typed confirmation)
-- `change-admin-password` — fully functional (v0.0.4, interactive only)
+- `change-admin-password` — fully functional (v0.0.5, interactive only)
+- `setup-host` — fully functional (v0.0.5, interactive unless --non-interactive)
 - `backup` — refuses execution with "not implemented" message
 - `remove` — refuses execution with "not implemented" message
 
