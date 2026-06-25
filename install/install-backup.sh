@@ -33,14 +33,17 @@ VERSION="0.1.0"
 # ---------------------------------------------------------------------------
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # REPO_ROOT is the same as SCRIPT_DIR when script is at repo root
+# Also check /root/openvas-tools (common when run via install-greenbone.sh from /tmp)
 if [ -f "$SCRIPT_DIR/scripts/backup_restore/greenbone_backup.py" ]; then
   REPO_ROOT="$SCRIPT_DIR"
+elif [ -d "/root/openvas-tools" ]; then
+  REPO_ROOT="/root/openvas-tools"
 else
   REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd 2>/dev/null || echo "")"
 fi
 
 # GitHub raw URL for curl fallback when repo is not cloned locally
-REPO_BASE_URL="https://raw.githubusercontent.com/Coverup20/openvas-tools/feat/greenbone-deploy-mode"
+REPO_BASE_URL="https://raw.githubusercontent.com/Coverup20/openvas-tools/main"
 
 BACKUP_DIR="/opt/greenbone-backup"
 SCRIPTS_DIR="$BACKUP_DIR/scripts"
