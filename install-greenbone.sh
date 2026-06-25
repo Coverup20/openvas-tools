@@ -23,7 +23,7 @@ ok()    { echo -e "\e[1;32m[ OK ]\e[0m  $*"; }
 warn()  { echo -e "\e[1;33m[WARN]\e[0m  $*" >&2; }
 fail()  { echo -e "\e[1;31m[FAIL]\e[0m  $*" >&2; }
 hr()    { echo "──────────────────────────────────────────────────────"; }
-confirm() { local a; echo -n "$1 [y/N] "; read -r a; [[ "$a" =~ ^[yY] ]]; }
+confirm() { local a; if ! [ -t 0 ]; then echo "Non-interactive mode: skipping confirmation."; return 1; fi; echo -n "$1 [y/N] "; read -r a; [[ "$a" =~ ^[yY] ]]; }
 
 # ── Download a sub‑script from GitHub via curl ─────────────────────────
 fetch() {
@@ -130,6 +130,20 @@ run_mode() {
 
 # ── MENU ────────────────────────────────────────────────────────────────
 menu() {
+    if ! [ -t 0 ]; then
+        fail "Interactive menu requires a terminal."
+        echo ""
+        echo "  Instead, specify a mode directly:"
+        echo "    bash <(curl -fsSL $RAW/install-greenbone.sh) setup-host"
+        echo "    bash <(curl -fsSL $RAW/install-greenbone.sh) deploy"
+        echo "    bash <(curl -fsSL $RAW/install-greenbone.sh) status"
+        echo ""
+        echo "  Or download first:"
+        echo "    curl -fsSL $RAW/install-greenbone.sh -o /tmp/install-greenbone.sh"
+        echo "    bash /tmp/install-greenbone.sh"
+        echo ""
+        exit 1
+    fi
     while true; do
         clear 2>/dev/null || true
         echo ""; hr
