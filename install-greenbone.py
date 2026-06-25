@@ -39,9 +39,12 @@ def confirm(prompt: str) -> bool:
 
 
 def run(cmd, **kwargs):
-    """Run a command, return CompletedProcess. Raises on failure unless check=False."""
+    """Run a command, show output in real-time, return CompletedProcess."""
     kwargs.setdefault('text', True)
-    kwargs.setdefault('capture_output', True)
+    # Default: show live output; set capture=True to suppress
+    if not kwargs.pop('capture', False):
+        return subprocess.run(cmd, **kwargs)
+    kwargs['capture_output'] = True
     return subprocess.run(cmd, **kwargs)
 
 
@@ -84,9 +87,10 @@ def setup_host():
 
     # Packages
     info("Installing system packages …")
-    run(["apt-get", "update", "-qq"], check=False)
+    run(["apt-get", "update", "-qq"], capture=True, check=False)
     run(["apt-get", "install", "-y", "-qq", "ca-certificates", "curl",
-         "gnupg", "git", "openssh-server", "qemu-guest-agent"], check=False)
+         "gnupg", "git", "openssh-server", "qemu-guest-agent"],
+        capture=True, check=False)
 
     # Docker
     if not shutil.which("docker") or not _docker_version():
@@ -99,10 +103,10 @@ def setup_host():
         with open("/etc/apt/sources.list.d/docker.list", "w") as f:
             f.write(f"deb [arch={arch} signed-by=/etc/apt/keyrings/docker.asc] "
                     f"https://download.docker.com/linux/ubuntu noble stable\n")
-        run(["apt-get", "update", "-qq"], check=False)
+        run(["apt-get", "update", "-qq"], capture=True, check=False)
         run(["apt-get", "install", "-y", "-qq", "docker-ce", "docker-ce-cli",
              "containerd.io", "docker-buildx-plugin", "docker-compose-plugin"],
-            check=False)
+            capture=True, check=False)
         run(["systemctl", "enable", "--now", "docker"], check=False)
     ok(f"Docker {_docker_version()}")
     ok(f"Compose {_compose_version()}")
@@ -197,7 +201,7 @@ def deploy():
     script = download("install/deploy-greenbone.sh")
     info("Starting deployment …")
     r = run([script, "deploy", "--deploy-confirmed", "--non-interactive",
-             "--project-dir", "/opt/greenbone-community"])
+             "--project-dir", "/opt/greenbone-community"], capture=True)
     os.unlink(script)
     if r.returncode == 0:
         ok("Greenbone deployed successfully")
@@ -369,7 +373,8 @@ def run_mode(mode: str, *args):
     """Run a deploy sub-command via downloaded deploy-greenbone.sh."""
     script = download("install/deploy-greenbone.sh")
     cmd = [script, mode] + list(args) + ["--project-dir", "/opt/greenbone-community"]
-    r = run(cmd)
+    info(f"Running: {' '.join(cmd)}")
+    r = run(cmd, capture=True)
     os.unlink(script)
     if r.returncode != 0:
         fail(f"Command failed (exit {r.returncode})")
