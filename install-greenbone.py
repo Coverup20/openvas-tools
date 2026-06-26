@@ -393,12 +393,14 @@ def do_restore():
 # ── MANAGEMENT ─────────────────────────────────────────────────────────
 
 def run_mode(mode: str, *args):
-    """Run a deploy sub-command via downloaded deploy-greenbone.sh."""
-    script = download("install/deploy-greenbone.sh")
-    cmd = [script, mode] + list(args) + ["--project-dir", "/opt/greenbone-community"]
+    """Run a deploy sub-command using local deploy-greenbone.sh."""
+    script = Path(__file__).resolve().parent / "install" / "deploy-greenbone.sh"
+    if not script.exists():
+        fail(f"Local deploy script not found: {script}")
+        return
+    cmd = [str(script), mode] + list(args) + ["--project-dir", "/opt/greenbone-community"]
     info(f"Running: {' '.join(cmd)}")
-    r = run(cmd, capture=True)
-    os.unlink(script)
+    r = run(cmd)
     if r.returncode != 0:
         fail(f"Command failed (exit {r.returncode})")
 
