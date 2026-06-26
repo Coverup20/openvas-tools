@@ -18,7 +18,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-VERSION = "0.2.6"
+VERSION = "0.2.19"
 RAW = "https://raw.githubusercontent.com/Coverup20/openvas-tools/main"
 
 
@@ -320,7 +320,7 @@ def _configure_do():
     # Write credentials directly to config file (not as env vars) so they
     # persist after this function returns.  Use rclone obscure to match
     # the format rclone expects for stored secrets.
-    obscure_r = run(["rclone", "obscure", secret_key], check=False)
+    obscure_r = run(["rclone", "obscure", secret_key], capture=True, check=False)
     obscured = obscure_r.stdout.strip() if obscure_r.returncode == 0 else secret_key
     with open(str(config_file), "a") as f:
         f.write(f"access_key_id = {access_key}\n")
