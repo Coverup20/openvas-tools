@@ -68,13 +68,19 @@ def create_do_remote(
     if endpoint is None:
         endpoint = f"https://{region}.digitaloceanspaces.com"
 
-    env = {**os.environ, "RCLONE_CONFIG": str(rclone_config)}
+    # Pass credentials via environment variables instead of CLI arguments
+    # to avoid exposing secrets in the process list (ps aux).
+    remote_upper = remote_name.upper()
+    env = {
+        **os.environ,
+        "RCLONE_CONFIG": str(rclone_config),
+        f"RCLONE_CONFIG_{remote_upper}_ACCESS_KEY_ID": access_key,
+        f"RCLONE_CONFIG_{remote_upper}_SECRET_ACCESS_KEY": secret_key,
+    }
     cmd = [
         "rclone", "config", "create", remote_name, "s3",
-        f"provider=DigitalOcean",
+        "provider=DigitalOcean",
         "env_auth=false",
-        f"access_key_id={access_key}",
-        f"secret_access_key={secret_key}",
         f"region={region}",
         f"endpoint={endpoint}",
         "acl=private",

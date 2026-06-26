@@ -286,20 +286,22 @@ def _configure_do():
                    or f"https://s3.{region}.amazonaws.com"
         provider = "AWS"
 
-    # Configure rclone
+    # Configure rclone — pass credentials via environment variables
+    # instead of CLI arguments to avoid exposing secrets in process list.
     info("Configuring rclone …")
     config_dir = Path("/root/.config/rclone")
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "rclone.conf"
 
+    remote_upper = "DO"
     env = os.environ.copy()
     env["RCLONE_CONFIG"] = str(config_file)
+    env[f"RCLONE_CONFIG_{remote_upper}_ACCESS_KEY_ID"] = access_key
+    env[f"RCLONE_CONFIG_{remote_upper}_SECRET_ACCESS_KEY"] = secret_key
 
     r = run(["rclone", "config", "create", "do", "s3",
              f"provider={provider}",
              "env_auth=false",
-             f"access_key_id={access_key}",
-             f"secret_access_key={secret_key}",
              f"region={region}",
              f"endpoint={endpoint}",
              "acl=private",
