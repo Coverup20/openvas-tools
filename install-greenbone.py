@@ -298,18 +298,13 @@ def _configure_do():
                    or f"https://s3.{region}.amazonaws.com"
         provider = "AWS"
 
-    # Configure rclone — pass credentials via environment variables
-    # instead of CLI arguments to avoid exposing secrets in process list.
+    # Configure rclone — create base config, then write credentials directly
+    # to the config file.  We do NOT pass credentials as environment variables
+    # because that prevents rclone from persisting them to disk.
     info("Configuring rclone …")
     config_dir = Path("/root/.config/rclone")
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "rclone.conf"
-
-    remote_upper = "DO"
-    env = os.environ.copy()
-    env["RCLONE_CONFIG"] = str(config_file)
-    env[f"RCLONE_CONFIG_{remote_upper}_ACCESS_KEY_ID"] = access_key
-    env[f"RCLONE_CONFIG_{remote_upper}_SECRET_ACCESS_KEY"] = secret_key
 
     r = run(["rclone", "config", "create", "do", "s3",
              f"provider={provider}",
@@ -317,14 +312,23 @@ def _configure_do():
              f"region={region}",
              f"endpoint={endpoint}",
              "acl=private",
-             "--obscure"],
-            env=env, check=False)
+             "--obscure"])
     if r.returncode != 0:
-        warn(f"Rclone config failed: {r.stderr.strip()}")
+        warn(f"Rclone config create failed: {r.stderr.strip()}")
         return
 
-    # Test
-    r2 = run(["rclone", "lsd", "do:testmonbck"], env=env, check=False)
+    # Write credentials directly to config file (not as env vars) so they
+    # persist after this function returns.  Use rclone obscure to match
+    # the format rclone expects for stored secrets.
+    obscure_r = run(["rclone", "obscure", secret_key], check=False)
+    obscured = obscure_r.stdout.strip() if obscure_r.returncode == 0 else secret_key
+    with open(str(config_file), "a") as f:
+        f.write(f"access_key_id = {access_key}\n")
+        f.write(f"secret_access_key = {obscured}\n")
+    config_file.chmod(0o600)
+
+    # Test connection with the persisted config
+    r2 = run(["rclone", "lsd", "do:testmonbck"], check=False)
     if r2.returncode == 0:
         ok("DO Spaces connection OK")
         # Enable upload
