@@ -42,7 +42,15 @@ def install(
     log("=== greenbone_install_backup.py ===")
 
     if repo_root is None:
-        repo_root = Path("/root/openvas-tools") if Path("/root/openvas-tools").exists() else Path.cwd()
+        # Auto-detect repo root from package location:
+        # greenbone_backup/install.py -> parent/parent = repo root
+        pkg_parent = Path(__file__).resolve().parent.parent
+        if (pkg_parent / "scripts" / "greenbone_install_backup.py").exists():
+            repo_root = pkg_parent
+        elif Path("/root/openvas-tools").exists():
+            repo_root = Path("/root/openvas-tools")
+        else:
+            repo_root = Path.cwd()
 
     # Determine script source
     # Try new-style scripts/ first, fall back to scripts/backup_restore/

@@ -53,6 +53,20 @@ def run(cmd, **kwargs):
     return subprocess.run(cmd, **kwargs)
 
 
+def _safe_text(value):
+    """Return stripped text or empty string if value is None."""
+    return (value or "").strip()
+
+
+def _safe_lines(value):
+    """Yield non-empty stripped lines from a string or None."""
+    text = _safe_text(value)
+    for line in text.splitlines():
+        line = line.strip()
+        if line:
+            yield line
+
+
 def check_root():
     if os.geteuid() != 0:
         fail("Must be run as root (sudo).")
@@ -246,7 +260,7 @@ def install_backup():
         pass
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + ":" + env.get("PYTHONPATH", "")
-    r = run([sys.executable, str(local_script), "--install"], env=env, live=True)
+    r = run([sys.executable, str(local_script), "--install", "--repo-root", str(repo_root)], env=env, live=True)
     if r.returncode != 0:
         fail("Backup installation failed")
         return
@@ -272,7 +286,12 @@ def install_backup():
 
 
 def _configure_do():
-    """Interactive DO Spaces configuration."""
+    """Interactive DO Spaces configuration.
+
+    Writes rclone config directly to /root/.config/rclone/rclone.conf
+    with 0600 permissions.  Credentials are stored in plain text
+    (rclone accepts plain secret_access_key in the config file).
+    """
     print()
     info("DigitalOcean Spaces backup configuration")
     print("(leave empty to skip)")
@@ -282,6 +301,8 @@ def _configure_do():
     if remote not in ("do", "aws"):
         warn("Invalid remote type, skipping")
         return
+
+    bucket_name = input("Space name (bucket) [testmonbck]: ").strip() or "testmonbck"
 
     access_key = input("Access Key ID: ").strip()
     if not access_key:
@@ -303,45 +324,43 @@ def _configure_do():
                    or f"https://s3.{region}.amazonaws.com"
         provider = "AWS"
 
-    # Configure rclone — create base config, then write credentials directly
-    # to the config file.  We do NOT pass credentials as environment variables
-    # because that prevents rclone from persisting them to disk.
     info("Configuring rclone …")
     config_dir = Path("/root/.config/rclone")
     config_dir.mkdir(parents=True, exist_ok=True)
     config_file = config_dir / "rclone.conf"
 
-    r = run(["rclone", "config", "create", "do", "s3",
-             f"provider={provider}",
-             "env_auth=false",
-             f"region={region}",
-             f"endpoint={endpoint}",
-             "acl=private",
-             "--obscure"])
-    if r.returncode != 0:
-        warn(f"Rclone config create failed: {r.stderr.strip()}")
-        return
-
-    # Write credentials directly to config file (not as env vars) so they
-    # persist after this function returns.  Use rclone obscure to match
-    # the format rclone expects for stored secrets.
-    obscure_r = run(["rclone", "obscure", secret_key], capture=True, check=False)
-    obscured = obscure_r.stdout.strip() if obscure_r.returncode == 0 else secret_key
-    with open(str(config_file), "a") as f:
-        f.write(f"access_key_id = {access_key}\n")
-        f.write(f"secret_access_key = {obscured}\n")
+    # Write config directly — no env vars, no rclone config create CLI.
+    # Plain-text secret_access_key is safe with 0600 perms.
+    header = "[do]\n"
+    body = (
+        f"type = s3\n"
+        f"provider = {provider}\n"
+        f"env_auth = false\n"
+        f"access_key_id = {access_key}\n"
+        f"secret_access_key = {secret_key}\n"
+        f"region = {region}\n"
+        f"endpoint = {endpoint}\n"
+        f"acl = private\n"
+    )
+    config_file.write_text(header + body, encoding="utf-8")
     config_file.chmod(0o600)
+    info(f"rclone config written: {config_file} (remote: do, bucket: {bucket_name})")
 
-    # Test connection with the persisted config
-    r2 = run(["rclone", "lsd", "do:testmonbck"], capture=True, check=False)
-    if r2.returncode == 0:
-        ok("DO Spaces connection OK")
-        # Enable upload
+    # Test connection: list the configured bucket on the remote.
+    test_path = f"do:{bucket_name}"
+    test_cmd = ["rclone", "lsd", test_path]
+    info(f"Testing: {' '.join(test_cmd)}")
+    r = run(test_cmd, check=False)
+    if r.returncode == 0:
+        ok(f"Remote do: (bucket {bucket_name}) is accessible")
+        for line in _safe_lines(r.stdout):
+            print(f"  {line}")
         if confirm("Enable upload and run test backup?"):
             _enable_upload()
     else:
-        warn(f"Connection test failed: {r2.stderr.strip()}")
-        warn("Check credentials and bucket name, then run: rclone config")
+        err_msg = _safe_text(r.stderr)
+        warn(f"Remote do: (bucket {bucket_name}) not accessible")
+        warn(f"Error: {err_msg[:200]}")
 
 
 def _enable_upload():
@@ -405,17 +424,32 @@ def do_restore():
         remotes = [r.strip().rstrip(":") for r in remotes_r.stdout.strip().splitlines() if r.strip()]
         choices = []
         for rm in remotes:
-            # List top-level directories (buckets or paths) on this remote
+            # Try to list top-level directories (buckets / spaces) on this remote
             top_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
-            if top_r.returncode != 0:
-                continue
-            top_dirs = []
-            for line in top_r.stdout.strip().splitlines():
-                parts = line.split()
-                if len(parts) >= 1:
-                    top_dirs.append(parts[-1])
-            # For each top-level dir, look for greenbone-backups/ inside
-            for bucket in top_dirs:
+            bucket_candidates = []
+            if top_r.returncode == 0:
+                for line in top_r.stdout.strip().splitlines():
+                    parts = line.split()
+                    if parts:
+                        bucket_candidates.append(parts[-1])
+            else:
+                # lsd on root failed (e.g. 403 AccessDenied — no ListBuckets permission).
+                # Try common bucket paths and ask user if needed.
+                for guess in ["greenbone-backups", "testmonbck"]:
+                    probe = run(["rclone", "lsd", f"{rm}:{guess}"], capture=True, check=False)
+                    if probe.returncode == 0:
+                        # Found a valid bucket — use it to discover backup paths
+                        bucket_candidates.append(guess)
+                        break
+                if not bucket_candidates:
+                    # Ask user for the bucket/space name
+                    info("Remote is configured but no buckets were detected automatically.")
+                    bucket = input(f"Enter bucket/space name for remote '{rm}' (or leave empty to skip): ").strip()
+                    if bucket:
+                        bucket_candidates.append(bucket)
+
+            # For each bucket, look for greenbone-backups/ inside
+            for bucket in bucket_candidates:
                 ls_r = run(["rclone", "lsd", f"{rm}:{bucket}/greenbone-backups"], capture=True, check=False)
                 if ls_r.returncode != 0:
                     continue
@@ -438,10 +472,8 @@ def do_restore():
                         choices.append((path, label))
         if not choices:
             fail("No Greenbone backup directories found on any rclone remote")
-            info("Check that rclone is configured with DO Spaces access and backups exist")
-            if confirm("Configure rclone for DO Spaces now?"):
-                _configure_do()
-                info("Retry restore after rclone configuration")
+            info("Verify that a 'greenbone-backups' directory exists in the configured bucket.")
+            info("Check the bucket/space name in your DO Spaces account.")
             return
         print("\nGreenbone backup locations found:")
         for i, (path, label) in enumerate(choices, 1):
@@ -465,9 +497,112 @@ def do_restore():
         if confirm(f"Copy all backups from {remote_path} to {dest}?"):
             Path(dest).mkdir(parents=True, exist_ok=True)
             run(["rclone", "copy", "--progress", remote_path, dest], live=True)
-            ok(f"Backups restored to {dest}")
+            ok(f"Backups downloaded to {dest}")
         else:
-            info("Restore cancelled")
+            info("Download skipped. Archives may already be present in " + dest)
+
+        # ── Full restore (extract + database + volumes) ──────────────
+        archives = sorted(Path(dest).glob("greenbone-full-*.tar.gz"))
+        if not archives:
+            info("No full backup archives found in " + dest)
+            info("Extract manually: tar -xzf <archive> -C /tmp/restore")
+            return
+        info(f"Found {len(archives)} backup archive(s) in {dest}")
+        for a in archives:
+            print(f"  {a.name}  ({a.stat().st_size / 1024 / 1024:.0f} MB)")
+        if not confirm("Extract and restore the downloaded backup?"):
+            info("Restore cancelled after download.")
+            return
+
+        compose_file = Path("/opt/greenbone-community/compose.yaml")
+        if not compose_file.exists():
+            warn("Compose file not found at /opt/greenbone-community/compose.yaml")
+            warn("Cannot restore database automatically — extract the archives manually.")
+            return
+
+        # Check if Greenbone containers are running
+        ps_r = run(["docker", "compose", "-f", str(compose_file), "ps", "--all"],
+                   capture=True, check=False)
+        running_containers = sum(1 for ln in ps_r.stdout.splitlines() if "Up" in ln) if ps_r.returncode == 0 else 0
+        if running_containers > 0:
+            warn(f"{running_containers} Greenbone container(s) are currently running.")
+            if not confirm("Stop containers and overwrite data?"):
+                info("Restore cancelled. Archives are in " + dest)
+                return
+
+        # Stop the stack before restore
+        info("Stopping Greenbone stack ...")
+        run(["docker", "compose", "-f", str(compose_file), "down"], live=True, check=False)
+        ok("Stack stopped")
+
+        for archive in archives:
+            info(f"Processing: {archive.name}")
+
+            # Extract
+            extract_dir = Path(dest) / archive.name.replace(".tar.gz", ".extracted")
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            run(["tar", "-xzf", str(archive), "-C", str(extract_dir)], live=True, check=False)
+            ok(f"Extracted: {archive.name}")
+
+            # Restore database
+            for sql_file in extract_dir.rglob("*.sql"):
+                info(f"Found database dump: {sql_file.name}")
+                if confirm("Restore PostgreSQL database?"):
+                    # Start only pg-gvm for restore
+                    run(["docker", "compose", "-f", str(compose_file), "up", "-d", "pg-gvm"],
+                        live=True, check=False)
+                    # Wait for pg-gvm to be ready
+                    import time
+                    for attempt in range(12):
+                        pg_r = run(["docker", "compose", "-f", str(compose_file),
+                                    "exec", "-T", "pg-gvm", "pg_isready", "-U", "gvmd"],
+                                   capture=True, check=False)
+                        if pg_r.returncode == 0:
+                            break
+                        time.sleep(5)
+                    # Restore via psql
+                    sql_text = sql_file.read_text(encoding="utf-8")
+                    run(["docker", "compose", "-f", str(compose_file),
+                         "exec", "-T", "pg-gvm", "psql", "-U", "gvmd", "-d", "gvmd"],
+                        input=sql_text, live=True, check=False)
+                    ok("Database restored")
+                break  # only first .sql file
+
+            # Restore Docker volumes from tar inside archive
+            for vol_tar in extract_dir.glob("*.tar.gz"):
+                vol_name = vol_tar.stem.replace(".tar", "")
+                info(f"Found volume archive: {vol_name}")
+                if confirm(f"Restore volume '{vol_name}'?"):
+                    run(["docker", "run", "--rm",
+                         "-v", f"{vol_name}:/volume",
+                         "-v", f"{vol_tar}:/backup/archive.tar.gz:ro",
+                         "busybox:latest",
+                         "tar", "xzf", "/backup/archive.tar.gz", "-C", "/volume"],
+                        live=True, check=False)
+                    ok(f"Volume {vol_name} restored")
+
+        # Start the stack
+        if confirm("Start the Greenbone stack now?"):
+            info("Starting Greenbone stack ...")
+            run(["docker", "compose", "-f", str(compose_file), "up", "-d"], live=True, check=False)
+            # Wait for gvmd to be running (dependencies may take time)
+            info("Waiting for gvmd to be ready ...")
+            import time
+            for attempt in range(30):
+                st_r = run(["docker", "compose", "-f", str(compose_file), "ps",
+                            "--format", "{{.State}}", "gvmd"], capture=True, check=False)
+                state = st_r.stdout.strip() if st_r.returncode == 0 else ""
+                if state == "running":
+                    ok("gvmd is running")
+                    break
+                time.sleep(4)
+            else:
+                warn(f"gvmd state after 120s: '{state}' — not fully running yet.")
+                warn("Run menu option 6 to check stack status later.")
+            ok("Greenbone stack started")
+            info("Run menu option 6 to verify stack status.")
+
+        ok("Restore completed")
     else:
         return
 

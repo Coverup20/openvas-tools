@@ -62,21 +62,17 @@ def create_do_remote(
 ) -> None:
     """Create or update a DigitalOcean Spaces rclone remote.
 
-    Credentials are stored encrypted via --obscure.
-    No secret is echoed in logs or stdout.
+    Credentials are written directly to the config file in plain text
+    with 0600 permissions.  rclone accepts plain-text secret_access_key.
+    No secret is ever echoed in logs or stdout.
     """
     if endpoint is None:
         endpoint = f"https://{region}.digitaloceanspaces.com"
 
-    # Pass credentials via environment variables instead of CLI arguments
-    # to avoid exposing secrets in the process list (ps aux).
-    remote_upper = remote_name.upper()
-    env = {
-        **os.environ,
-        "RCLONE_CONFIG": str(rclone_config),
-        f"RCLONE_CONFIG_{remote_upper}_ACCESS_KEY_ID": access_key,
-        f"RCLONE_CONFIG_{remote_upper}_SECRET_ACCESS_KEY": secret_key,
-    }
+    # Create the base config (provider, region, endpoint).
+    # Do NOT pass credentials via env vars — that prevents rclone from
+    # persisting them to the config file.  Instead write them directly.
+    env = {**os.environ, "RCLONE_CONFIG": str(rclone_config)}
     cmd = [
         "rclone", "config", "create", remote_name, "s3",
         "provider=DigitalOcean",
@@ -84,9 +80,16 @@ def create_do_remote(
         f"region={region}",
         f"endpoint={endpoint}",
         "acl=private",
-        "--obscure",
     ]
     run(cmd, env=env, check=True, timeout=30)
+
+    # Append credentials directly to the config file.
+    # Plain-text is safe with 0600 permissions.  rclone accepts
+    # plain secret_access_key in the config file.
+    with open(str(rclone_config), "a") as f:
+        f.write(f"access_key_id = {access_key}\n")
+        f.write(f"secret_access_key = {secret_key}\n")
+    rclone_config.chmod(0o600)
     log(f"Remote '{remote_name}' created in {rclone_config}.")
 
 
