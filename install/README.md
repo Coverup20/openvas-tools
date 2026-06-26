@@ -6,31 +6,41 @@ Deployment and preparation scripts for Greenbone Community Edition.
 
 | Path | Description | Status |
 |---|---|---|
-| `deploy-greenbone.sh` | Safe Greenbone deployment framework | **Development** — audit and dry-run modes functional |
+| `deploy-greenbone.sh` | Safe Greenbone deployment framework | Development (v0.0.5 — audit, dry-run, deploy, update-feed, change-admin-password, setup-host modes functional) |
 | `setup-host.sh` | Ubuntu host preparation (Docker, dependencies, kernel params) | Planned |
 | `deploy-stack.sh` | Greenbone stack deployment and initial configuration | Planned |
 
 ## Current development — `deploy-greenbone.sh`
 
-The safe deployment framework is under active development on branch
-`feat/safe-greenbone-deployment`. See `docs/SAFE-DEPLOYMENT-DESIGN.md` for the
-full architecture.
+Development is on branch `feat/greenbone-deploy-mode`. See `docs/SAFE-DEPLOYMENT-DESIGN.md`.
 
-### Safe modes (functional)
+### Modes
 
-| Mode | Description |
+| Mode | Description | Exit |
+|---|---|---|
+| `audit` | Read-only system readiness check | 0 |
+| `dry-run` | Planned deployment sequence without execution | 0 |
+| `status` | Read-only current stack state | 0 |
+| `deploy` | Full deploy (requires `--deploy-confirmed` + typed confirmation) | 0 |
+| `update-feed` | Update feed/data services (requires `--feed-update-confirmed`) | 0 |
+| `change-admin-password` | Interactive admin password change | 0 |
+| `setup-host` | Interactive host preparation (Docker, Compose, repo) | 0 |
+| `backup` | NOT IMPLEMENTED | 3 |
+| `remove` | NOT IMPLEMENTED | 3 |
+
+### Confirmation gates
+
+Deploy mode requires BOTH:
+- `--deploy-confirmed` flag (or `--non-interactive` which implies it)
+- Typed `DEPLOY` confirmation (skipped if `--non-interactive`)
+
+### Disk thresholds
+
+| Free space | Behavior |
 |---|---|
-| `audit` | Read-only system readiness check |
-| `dry-run` | Planned deployment sequence without execution |
-| `status` | Read-only current stack state |
-
-### Unimplemented modes (refuse execution)
-
-| Mode | Expected exit code |
-|---|---|
-| `deploy` | 3 |
-| `backup` | 3 |
-| `remove` | 3 |
+| < 20GB | ❌ Fail before deployment |
+| 20–40GB | ⚠️ Warn + require confirmation |
+| ≥ 40GB | ✅ Pass |
 
 ### Usage
 
@@ -38,15 +48,15 @@ full architecture.
 # Run from repository root
 bash install/deploy-greenbone.sh audit
 bash install/deploy-greenbone.sh dry-run
-bash install/deploy-greenbone.sh --help
+bash install/deploy-greenbone.sh deploy --deploy-confirmed --project-dir /opt/greenbone-community
 ```
 
 ### Prerequisites
 
-- Bash 4+
-- `curl`, `sha256sum`
-- Docker and Docker Compose plugin (for full functionality; audit mode works
-  without them)
+- Bash 4+, `curl`, `sha256sum`
+- Docker and Docker Compose plugin
+- Root or sudo access (for deploy mode)
+- Minimum 20GB free disk (40GB recommended)
 
 ### No-production warning
 

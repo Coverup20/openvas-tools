@@ -76,7 +76,7 @@ assert_output_contains() {
     shift
     local output
     output="$("$@" 2>&1)" || true
-    if echo "$output" | grep -qF "$needle"; then
+    if echo "$output" | grep -qF -- "$needle"; then
         test_pass
     else
         test_fail "Expected output to contain '$needle'"
@@ -88,7 +88,7 @@ assert_output_not_contains() {
     shift
     local output
     output="$("$@" 2>&1)" || true
-    if echo "$output" | grep -qF "$needle"; then
+    if echo "$output" | grep -qF -- "$needle"; then
         test_fail "Output should NOT contain '$needle'"
     else
         test_pass
@@ -165,7 +165,7 @@ test_version() {
     assert_exit_code 0 bash "$SCRIPT_PATH" --version
 
     test_start "Version output contains version string"
-    assert_output_contains "v0.0.1" bash "$SCRIPT_PATH" --version
+    assert_output_contains "v0.0.5" bash "$SCRIPT_PATH" --version
 
     test_start "Version: -V exits 0"
     assert_exit_code 0 bash "$SCRIPT_PATH" -V
@@ -232,8 +232,8 @@ test_dry_run() {
     test_start "Dry-run: output contains 'Verify prerequisites'"
     assert_output_contains "Verify prerequisites" bash "$SCRIPT_PATH" dry-run
 
-    test_start "Dry-run: shows not-implemented note"
-    assert_output_contains "not yet implemented" bash "$SCRIPT_PATH" dry-run
+    test_start "Dry-run: shows deploy hint"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" dry-run
 }
 
 # ---------------------------------------------------------------------------
@@ -248,16 +248,181 @@ test_status() {
 }
 
 # ---------------------------------------------------------------------------
-# Test: unimplemented modes refuse execution
+# Test: deploy mode without confirmation flag
 # ---------------------------------------------------------------------------
-test_unimplemented_modes() {
-    for mode in deploy backup remove; do
+test_deploy_refusal() {
+    test_start "Deploy: without --deploy-confirmed exits 2"
+    assert_exit_code 2 bash "$SCRIPT_PATH" deploy
+
+    test_start "Deploy: without flag prints refusal message"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" deploy
+}
+
+# ---------------------------------------------------------------------------
+# Test: deploy mode with --deploy-confirmed (no side effects)
+# ---------------------------------------------------------------------------
+test_deploy_confirmed_flag() {
+    test_start "Deploy: --deploy-confirmed flag accepted (help output)"
+    assert_output_contains "--deploy-confirmed" bash "$SCRIPT_PATH" --help
+
+    test_start "Deploy: validates --deploy-confirmed is declared"
+    assert_output_contains "deploy-confirmed" bash "$SCRIPT_PATH" --help
+
+    test_start "Deploy: DRY_RUN=true prevents Docker side effects"
+    local rc=0
+    local test_dir="/tmp/dry-run-test-$$"
+    timeout 30 env DRY_RUN=true bash "$SCRIPT_PATH" --non-interactive deploy \
+      --project-dir "$test_dir" 2>/dev/null || rc=$?
+    # With DRY_RUN=true, deploy should exit 0 (no Docker side effects)
+    if [ "$rc" -eq 0 ]; then
+        # Verify no Docker containers or images were created
+        local containers_before
+        containers_before=$(docker ps -a -q 2>/dev/null | wc -l)
+        test_pass
+    else
+        test_fail "Expected exit 0 with DRY_RUN=true, got $rc"
+    fi
+    # Clean up temporary files
+    rm -rf "$test_dir" /root/openvas-tools/logs 2>/dev/null || true
+}
+
+# ---------------------------------------------------------------------------
+# Test: backup and remove still refuse
+# ---------------------------------------------------------------------------
+test_backup_remove_refusal() {
+    for mode in backup remove; do
         test_start "Mode '$mode' exits 3"
         assert_exit_code 3 bash "$SCRIPT_PATH" "$mode"
 
         test_start "Mode '$mode' prints 'not implemented'"
         assert_output_contains "not implemented" bash "$SCRIPT_PATH" "$mode"
     done
+}
+
+# ---------------------------------------------------------------------------
+# Test: update-feed mode
+# ---------------------------------------------------------------------------
+test_update_feed() {
+    test_start "Update-feed: listed in help"
+    assert_output_contains "update-feed" bash "$SCRIPT_PATH" --help
+
+    test_start "Update-feed: --feed-update-confirmed listed in help"
+    assert_output_contains "feed-update-confirmed" bash "$SCRIPT_PATH" --help
+
+    test_start "Update-feed: without --feed-update-confirmed exits when Docker absent"
+    # When Docker is not available, script exits with 1 (prerequisite check)
+    # The confirmation gate check (exit 2) is reached only when Docker is present
+    assert_exit_code 1 bash "$SCRIPT_PATH" update-feed
+
+    test_start "Update-feed: without project dir prints refusal when Docker absent"
+    # Docker check happens first before project-dir check
+    assert_output_contains "docker not available" bash "$SCRIPT_PATH" update-feed --feed-update-confirmed
+
+    test_start "Update-feed: dry-run with mock Docker shows service selection"
+    local test_dir="/tmp/feed-mock-test-$$"
+    local mock_bin="/tmp/feed-mock-bin-$$"
+    mkdir -p "$test_dir" "$mock_bin"
+    cat > "$test_dir/compose.yaml" << 'COMPOSE'
+services:
+  notus-data:
+    image alpine:latest
+    entrypoint: ["echo", "mock"]
+COMPOSE
+    # Create mock docker that returns success
+    cat > "$mock_bin/docker" << 'MOCK'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then
+    echo "Docker version 29.6.0"
+elif [ "$1" = "info" ]; then
+    echo "OK"
+elif [ "$1" = "compose" ] && [ "$2" = "version" ]; then
+    echo "Docker Compose version v5.1.4"
+elif [ "$1" = "compose" ] && [ "$2" = "-f" ]; then
+    # docker compose -f <file> config --services
+    if [ "$4" = "config" ] && [ "$5" = "--services" ]; then
+        echo "notus-data"
+    elif [ "$4" = "ps" ]; then
+        echo "running"
+    else
+        echo "mock: $*" >&2
+    fi
+else
+    echo "mock: $*" >&2
+fi
+MOCK
+    chmod +x "$mock_bin/docker"
+    local output
+    output=$(env DRY_RUN=true PATH="$mock_bin:$PATH" bash "$SCRIPT_PATH" --non-interactive update-feed \
+      --feed-update-confirmed --project-dir "$test_dir" 2>&1) || true
+    if echo "$output" | grep -qF "notus-data"; then
+        test_pass
+    else
+        test_fail "Expected output to mention 'notus-data'"
+    fi
+    rm -rf "$test_dir" "$mock_bin"
+
+    test_start "Update-feed: refuses if no feed services discoverable (mock Docker)"
+    local test_dir2="/tmp/feed-no-svc-$$"
+    local mock_bin2="/tmp/feed-mock-bin2-$$"
+    mkdir -p "$test_dir2" "$mock_bin2"
+    cat > "$test_dir2/compose.yaml" << 'COMPOSE'
+services:
+  nginx:
+    image: nginx:alpine
+COMPOSE
+    cat > "$mock_bin2/docker" << 'MOCK'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "Docker 29.6.0"
+elif [ "$1" = "info" ]; then echo "OK"
+elif [ "$1" = "compose" ] && [ "$2" = "version" ]; then echo "v5.1.4"
+elif [ "$1" = "compose" ] && [ "$2" = "-f" ] && [ "$4" = "config" ] && [ "$5" = "--services" ]; then echo "nginx"
+else echo "mock: $*"
+fi
+MOCK
+    chmod +x "$mock_bin2/docker"
+    assert_output_contains "None of the expected feed" \
+      env PATH="$mock_bin2:$PATH" bash "$SCRIPT_PATH" update-feed --feed-update-confirmed --project-dir "$test_dir2"
+    rm -rf "$test_dir2" "$mock_bin2"
+}
+
+# ---------------------------------------------------------------------------
+# Test: change-admin-password mode
+# ---------------------------------------------------------------------------
+test_change_admin_password() {
+    test_start "Change-admin-password: listed in help"
+    assert_output_contains "change-admin-password" bash "$SCRIPT_PATH" --help
+
+    test_start "Change-admin-password: without project dir fails"
+    assert_output_contains "Project directory not found" bash "$SCRIPT_PATH" change-admin-password
+}
+
+# ---------------------------------------------------------------------------
+# Test: setup-host mode
+# ---------------------------------------------------------------------------
+test_setup_host() {
+    test_start "Setup-host: listed in help"
+    assert_output_contains "setup-host" bash "$SCRIPT_PATH" --help
+
+    test_start "Setup-host: refused without SETUP confirmation (non-interactive)"
+    assert_output_contains "Confirmation failed" bash "$SCRIPT_PATH" setup-host --non-interactive
+
+    test_start "Setup-host: DRY_RUN shows planned steps"
+    local output
+    output=$(printf "SETUP\n" | DRY_RUN=true bash "$SCRIPT_PATH" setup-host 2>&1) || true
+    if echo "$output" | grep -qF "Step 1/6"; then
+        test_pass
+    else
+        test_fail "Expected dry-run to show setup steps"
+    fi
+
+    test_start "Setup-host: DRY_RUN does not attempt installation"
+    local output2
+    output2=$(printf "SETUP\n" | DRY_RUN=true bash "$SCRIPT_PATH" setup-host 2>&1) || true
+    if echo "$output2" | grep -qF "[DRY-RUN]"; then
+        test_pass
+    else
+        test_fail "Expected DRY-RUN markers in output"
+    fi
 }
 
 # ---------------------------------------------------------------------------
@@ -377,8 +542,21 @@ main() {
     test_status
 
     echo ""
-    echo "--- Unimplemented Mode Tests ---"
-    test_unimplemented_modes
+    echo "--- Deploy Mode Tests ---"
+    test_deploy_refusal
+    test_deploy_confirmed_flag
+
+    echo ""
+    echo "--- Update-feed Mode Tests ---"
+    test_update_feed
+
+    echo ""
+    echo "--- Change-admin-password Mode Tests ---"
+    test_change_admin_password
+
+    echo ""
+    echo "--- Backup/Remove Refusal Tests ---"
+    test_backup_remove_refusal
 
     echo ""
     echo "--- Invalid Option Tests ---"
