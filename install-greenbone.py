@@ -18,7 +18,7 @@ import sys
 import textwrap
 from pathlib import Path
 
-VERSION = "0.2.2"
+VERSION = "0.2.6"
 RAW = "https://raw.githubusercontent.com/Coverup20/openvas-tools/main"
 
 
