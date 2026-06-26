@@ -394,33 +394,39 @@ def do_restore():
             fail("No rclone remotes configured")
             return
         remotes = [r.strip().rstrip(":") for r in remotes_r.stdout.strip().splitlines() if r.strip()]
-        # Probe known Greenbone backup base paths
-        probe_paths = ["greenbone-backups", "greenbone-backup"]
         choices = []
         for rm in remotes:
-            for base in probe_paths:
-                ls_r = run(["rclone", "lsd", f"{rm}:{base}"], capture=True, check=False)
+            # List top-level directories (buckets or paths) on this remote
+            top_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
+            if top_r.returncode != 0:
+                continue
+            top_dirs = []
+            for line in top_r.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) >= 1:
+                    top_dirs.append(parts[-1])
+            # For each top-level dir, look for greenbone-backups/ inside
+            for bucket in top_dirs:
+                ls_r = run(["rclone", "lsd", f"{rm}:{bucket}/greenbone-backups"], capture=True, check=False)
                 if ls_r.returncode != 0:
                     continue
                 for line in ls_r.stdout.strip().splitlines():
                     parts = line.split()
                     if len(parts) >= 1:
                         name = parts[-1]
-                        path = f"{rm}:{base}/{name}"
-                        label = f"{rm}:{base}/{name}"
+                        path = f"{rm}:{bucket}/greenbone-backups/{name}"
+                        label = f"{rm}:{bucket}/greenbone-backups/{name}"
                         choices.append((path, label))
-                if choices:
-                    break
-            if not choices:
-                # Fallback: check top level of remote
-                ls_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
-                if ls_r.returncode == 0:
-                    for line in ls_r.stdout.strip().splitlines():
-                        parts = line.split()
-                        if len(parts) >= 1:
-                            name = parts[-1]
-                            path = f"{rm}:{name}"
-                            choices.append((path, f"{rm}:{name}"))
+            # Also probe without bucket: remote:greenbone-backups/
+            ls_r = run(["rclone", "lsd", f"{rm}:greenbone-backups"], capture=True, check=False)
+            if ls_r.returncode == 0:
+                for line in ls_r.stdout.strip().splitlines():
+                    parts = line.split()
+                    if len(parts) >= 1:
+                        name = parts[-1]
+                        path = f"{rm}:greenbone-backups/{name}"
+                        label = f"{rm}:greenbone-backups/{name}"
+                        choices.append((path, label))
         if not choices:
             fail("No Greenbone backup directories found on any rclone remote")
             info("Check that rclone is configured with DO Spaces access and backups exist")
