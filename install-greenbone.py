@@ -158,17 +158,17 @@ def _detect_os():
 
 
 def _docker_version():
-    r = run(["docker", "--version"], check=False)
+    r = run(["docker", "--version"], capture=True, check=False)
     return r.stdout.strip() if r.returncode == 0 else "NOT INSTALLED"
 
 
 def _compose_version():
-    r = run(["docker", "compose", "version"], check=False)
+    r = run(["docker", "compose", "version"], capture=True, check=False)
     return r.stdout.strip() if r.returncode == 0 else "NOT INSTALLED"
 
 
 def _read_sysctl(key):
-    r = run(["sysctl", "-n", key], check=False)
+    r = run(["sysctl", "-n", key], capture=True, check=False)
     return r.stdout.strip() if r.returncode == 0 else "0"
 
 
