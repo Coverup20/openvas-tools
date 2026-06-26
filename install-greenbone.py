@@ -216,10 +216,20 @@ def install_backup():
     if not confirm("Install backup system?"):
         return
 
-    # Delegate to greenbone_install_backup.py for the heavy lifting
-    script = download("scripts/greenbone_install_backup.py")
-    r = run([sys.executable, script, "--install"])
-    os.unlink(script)
+    # Use the local copy of greenbone_install_backup.py from the repo,
+    # not a downloaded one, because it depends on the greenbone_backup package.
+    # The repo root is the directory containing this script.
+    repo_root = Path(__file__).resolve().parent
+    local_script = repo_root / "scripts" / "greenbone_install_backup.py"
+
+    if not local_script.exists():
+        fail("Local greenbone_install_backup.py not found at %s" % local_script)
+        return
+
+    info("Running local backup installer (PYTHONPATH includes repo)...")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(repo_root) + ":" + env.get("PYTHONPATH", "")
+    r = run([sys.executable, str(local_script), "--install"], env=env)
     if r.returncode != 0:
         fail("Backup installation failed")
         return
