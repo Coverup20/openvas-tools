@@ -388,12 +388,41 @@ def do_restore():
         if not shutil.which("rclone"):
             fail("rclone not installed — cannot restore from cloud")
             return
+        # Discover available rclone remotes
+        remotes_r = run(["rclone", "listremotes"], check=False)
+        if remotes_r.returncode != 0 or not remotes_r.stdout.strip():
+            fail("No rclone remotes configured")
+            return
+        remotes = [r.strip().rstrip(":") for r in remotes_r.stdout.strip().splitlines() if r.strip()]
+        # For each remote, list top-level directories
+        choices = []
+        for rm in remotes:
+            ls_r = run(["rclone", "lsd", f"{rm}:"], check=False)
+            if ls_r.returncode != 0:
+                continue
+            for line in ls_r.stdout.strip().splitlines():
+                parts = line.split()
+                if len(parts) >= 1:
+                    name = parts[-1]
+                    path = f"{rm}:{name}"
+                    choices.append((path, f"{rm}:{name}"))
+        if not choices:
+            # Fallback: show the remote itself
+            choices = [(f"{rm}:", f"{rm}: (top level)") for rm in remotes]
+        print("\nAvailable backup locations:")
+        for i, (path, label) in enumerate(choices, 1):
+            print(f"  {i}) {label}")
+        print(f"  0) Cancel")
+        pick = input(f"\nSelect [1-{len(choices)}]: ").strip()
+        if not pick.isdigit() or int(pick) < 1 or int(pick) > len(choices):
+            info("Restore cancelled")
+            return
+        remote_path = choices[int(pick) - 1][0]
         dest = input("Local restore directory [/tmp/restore]: ").strip() or "/tmp/restore"
         if Path(dest).exists():
             if not confirm(f"Directory {dest} exists. Continue?"):
                 return
-        remote_path = input("rclone remote path [do:testmonbck/greenbone-backups]: ").strip() or "do:testmonbck/greenbone-backups"
-        info(f"Listing available backups from {remote_path} ...")
+        info(f"Listing contents of {remote_path} ...")
         r = run(["rclone", "lsf", remote_path], check=False)
         if r.returncode != 0:
             fail(f"Cannot list {remote_path} — check rclone config and remote path")
