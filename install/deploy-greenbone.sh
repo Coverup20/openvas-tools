@@ -681,9 +681,13 @@ EOF
 poll_readiness() {
     local project_dir="$1"
     local compose_file="$2"
-    local max_attempts=30
+    local max_attempts=60
     local attempt=1
-    local poll_interval=5
+    local poll_interval=10
+
+    # Services that naturally exit (oneshot) — excluded from running check.
+    # All other services must be 'running' for deployment to be considered healthy.
+    local ONESHOT_SERVICES="configure-openvas|gpg-data|gvm-config|pg-gvm-migrator"
 
     # In dry-run mode, report immediately
     if [ "${DRY_RUN:-false}" = "true" ]; then
@@ -698,25 +702,32 @@ poll_readiness() {
     echo ""
 
     while [ $attempt -le $max_attempts ]; do
-        local all_running=true
+        local core_ok=true
         local output
         output=$(docker compose -f "$compose_file" ps --format '{{.Name}} {{.State}}' 2>/dev/null || echo "")
 
         if [ -z "$output" ]; then
             log_debug "Attempt $attempt: no container output yet"
-            all_running=false
+            core_ok=false
         else
             while IFS= read -r line; do
                 [ -z "$line" ] && continue
+                local name="${line% *}"
                 local state="${line##* }"
+
+                # Skip oneshot containers — they exit cleanly after init
+                if echo "$name" | grep -qiE "$ONESHOT_SERVICES"; then
+                    continue
+                fi
+
                 if [ "$state" != "running" ]; then
-                    all_running=false
+                    core_ok=false
                 fi
             done <<< "$output"
         fi
 
-        if $all_running; then
-            log_pass "All containers are running"
+        if $core_ok; then
+            log_pass "Core services are running"
             echo ""
             docker compose -f "$compose_file" ps
             echo ""

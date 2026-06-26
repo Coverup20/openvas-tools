@@ -18,8 +18,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-VERSION = "0.1.0"
-RAW = "https://raw.githubusercontent.com/Coverup20/openvas-tools/feat/greenbone-deploy-mode"
+VERSION = "0.2.2"
+RAW = "https://raw.githubusercontent.com/Coverup20/openvas-tools/main"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────
@@ -198,11 +198,14 @@ def deploy():
     check_root()
     if not confirm("Deploy Greenbone Community Containers?"):
         return
-    script = download("install/deploy-greenbone.sh")
-    info("Starting deployment …")
-    r = run([script, "deploy", "--deploy-confirmed", "--non-interactive",
-             "--project-dir", "/opt/greenbone-community"], capture=True)
-    os.unlink(script)
+    # Use local deploy-greenbone.sh from the repository
+    script = Path(__file__).resolve().parent / "install" / "deploy-greenbone.sh"
+    if not script.exists():
+        fail(f"Local deploy script not found: {script}")
+        return
+    info("Starting deployment using local script ...")
+    r = run([str(script), "deploy", "--deploy-confirmed", "--non-interactive",
+             "--project-dir", "/opt/greenbone-community"])
     if r.returncode == 0:
         ok("Greenbone deployed successfully")
     else:
