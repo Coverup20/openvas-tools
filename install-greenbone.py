@@ -194,9 +194,9 @@ def _user_exists(name):
 
 # ── 2. DEPLOY ──────────────────────────────────────────────────────────
 
-def deploy():
+def deploy(non_interactive=False):
     check_root()
-    if not confirm("Deploy Greenbone Community Containers?"):
+    if not non_interactive and not confirm("Deploy Greenbone Community Containers?"):
         return
     # Use local deploy-greenbone.sh from the repository
     script = Path(__file__).resolve().parent / "install" / "deploy-greenbone.sh"
@@ -441,11 +441,14 @@ def main():
                         choices=["setup-host", "deploy", "install-backup", "restore",
                                  "status", "update-feed", "change-password", "audit", "menu"],
                         help="Operation mode (default: interactive menu)")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="Skip all confirmation prompts (for automation)")
     args = parser.parse_args()
+    ni = args.non_interactive
 
     modes = {
-        "setup-host": setup_host,
-        "deploy": deploy,
+        "setup-host": lambda: setup_host() if not ni else (check_root(), setup_host()),
+        "deploy": lambda: deploy(non_interactive=ni),
         "install-backup": install_backup,
         "restore": do_restore,
         "status": lambda: run_mode("status"),
