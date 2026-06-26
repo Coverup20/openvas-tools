@@ -99,7 +99,7 @@ def setup_host():
         run(["curl", "-fsSL", "https://download.docker.com/linux/ubuntu/gpg",
              "-o", "/etc/apt/keyrings/docker.asc"], check=False)
         os.chmod("/etc/apt/keyrings/docker.asc", 0o644)
-        arch = run(["dpkg", "--print-architecture"]).stdout.strip() or "amd64"
+        arch = run(["dpkg", "--print-architecture"], capture=True).stdout.strip() or "amd64"
         with open("/etc/apt/sources.list.d/docker.list", "w") as f:
             f.write(f"deb [arch={arch} signed-by=/etc/apt/keyrings/docker.asc] "
                     f"https://download.docker.com/linux/ubuntu noble stable\n")
