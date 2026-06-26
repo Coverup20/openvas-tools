@@ -388,28 +388,44 @@ def do_restore():
         if not shutil.which("rclone"):
             fail("rclone not installed — cannot restore from cloud")
             return
-        # Discover available rclone remotes
+        # Discover Greenbone backup paths on configured rclone remotes
         remotes_r = run(["rclone", "listremotes"], capture=True, check=False)
         if remotes_r.returncode != 0 or not remotes_r.stdout.strip():
             fail("No rclone remotes configured")
             return
         remotes = [r.strip().rstrip(":") for r in remotes_r.stdout.strip().splitlines() if r.strip()]
-        # For each remote, list top-level directories
+        # Probe known Greenbone backup base paths
+        probe_paths = ["greenbone-backups", "greenbone-backup"]
         choices = []
         for rm in remotes:
-            ls_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
-            if ls_r.returncode != 0:
-                continue
-            for line in ls_r.stdout.strip().splitlines():
-                parts = line.split()
-                if len(parts) >= 1:
-                    name = parts[-1]
-                    path = f"{rm}:{name}"
-                    choices.append((path, f"{rm}:{name}"))
+            for base in probe_paths:
+                ls_r = run(["rclone", "lsd", f"{rm}:{base}"], capture=True, check=False)
+                if ls_r.returncode != 0:
+                    continue
+                for line in ls_r.stdout.strip().splitlines():
+                    parts = line.split()
+                    if len(parts) >= 1:
+                        name = parts[-1]
+                        path = f"{rm}:{base}/{name}"
+                        label = f"{rm}:{base}/{name}"
+                        choices.append((path, label))
+                if choices:
+                    break
+            if not choices:
+                # Fallback: check top level of remote
+                ls_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
+                if ls_r.returncode == 0:
+                    for line in ls_r.stdout.strip().splitlines():
+                        parts = line.split()
+                        if len(parts) >= 1:
+                            name = parts[-1]
+                            path = f"{rm}:{name}"
+                            choices.append((path, f"{rm}:{name}"))
         if not choices:
-            # Fallback: show the remote itself
-            choices = [(f"{rm}:", f"{rm}: (top level)") for rm in remotes]
-        print("\nAvailable backup locations:")
+            fail("No Greenbone backup directories found on any rclone remote")
+            info("Check that rclone is configured with DO Spaces access and backups exist")
+            return
+        print("\nGreenbone backup locations found:")
         for i, (path, label) in enumerate(choices, 1):
             print(f"  {i}) {label}")
         print(f"  0) Cancel")
