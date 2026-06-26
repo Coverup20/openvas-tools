@@ -389,7 +389,7 @@ def do_restore():
             fail("rclone not installed — cannot restore from cloud")
             return
         # Discover available rclone remotes
-        remotes_r = run(["rclone", "listremotes"], check=False)
+        remotes_r = run(["rclone", "listremotes"], capture=True, check=False)
         if remotes_r.returncode != 0 or not remotes_r.stdout.strip():
             fail("No rclone remotes configured")
             return
@@ -397,7 +397,7 @@ def do_restore():
         # For each remote, list top-level directories
         choices = []
         for rm in remotes:
-            ls_r = run(["rclone", "lsd", f"{rm}:"], check=False)
+            ls_r = run(["rclone", "lsd", f"{rm}:"], capture=True, check=False)
             if ls_r.returncode != 0:
                 continue
             for line in ls_r.stdout.strip().splitlines():
@@ -423,7 +423,7 @@ def do_restore():
             if not confirm(f"Directory {dest} exists. Continue?"):
                 return
         info(f"Listing contents of {remote_path} ...")
-        r = run(["rclone", "lsf", remote_path], check=False)
+        r = run(["rclone", "lsf", remote_path], capture=True, check=False)
         if r.returncode != 0:
             fail(f"Cannot list {remote_path} — check rclone config and remote path")
             return
