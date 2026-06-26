@@ -205,7 +205,8 @@ def deploy(non_interactive=False):
         return
     info("Starting deployment using local script ...")
     r = run([str(script), "deploy", "--deploy-confirmed", "--non-interactive",
-             "--project-dir", "/opt/greenbone-community"])
+             "--project-dir", "/opt/greenbone-community"],
+            cwd="/")
     if r.returncode == 0:
         ok("Greenbone deployed successfully")
     else:
