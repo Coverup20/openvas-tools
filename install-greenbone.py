@@ -430,6 +430,9 @@ def do_restore():
         if not choices:
             fail("No Greenbone backup directories found on any rclone remote")
             info("Check that rclone is configured with DO Spaces access and backups exist")
+            if confirm("Configure rclone for DO Spaces now?"):
+                _configure_do()
+                info("Retry restore after rclone configuration")
             return
         print("\nGreenbone backup locations found:")
         for i, (path, label) in enumerate(choices, 1):
