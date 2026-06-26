@@ -233,7 +233,7 @@ def install_backup():
     info("Running local backup installer (PYTHONPATH includes repo)...")
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + ":" + env.get("PYTHONPATH", "")
-    r = run([sys.executable, str(local_script), "--install"], env=env)
+    r = run([sys.executable, str(local_script), "--install"], env=env, cwd="/")
     if r.returncode != 0:
         fail("Backup installation failed")
         return
