@@ -204,9 +204,12 @@ def deploy(non_interactive=False):
         fail(f"Local deploy script not found: {script}")
         return
     info("Starting deployment using local script ...")
+    try:
+        os.chdir("/")
+    except OSError:
+        pass
     r = run([str(script), "deploy", "--deploy-confirmed", "--non-interactive",
-             "--project-dir", "/opt/greenbone-community"],
-            cwd="/")
+             "--project-dir", "/opt/greenbone-community"])
     if r.returncode == 0:
         ok("Greenbone deployed successfully")
     else:
@@ -231,9 +234,14 @@ def install_backup():
         return
 
     info("Running local backup installer (PYTHONPATH includes repo)...")
+    # CWD may be invalid after setup_host() — ensure valid directory before subprocess
+    try:
+        os.chdir("/")
+    except OSError:
+        pass
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + ":" + env.get("PYTHONPATH", "")
-    r = run([sys.executable, str(local_script), "--install"], env=env, cwd="/")
+    r = run([sys.executable, str(local_script), "--install"], env=env)
     if r.returncode != 0:
         fail("Backup installation failed")
         return
