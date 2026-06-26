@@ -39,12 +39,17 @@ def confirm(prompt: str) -> bool:
 
 
 def run(cmd, **kwargs):
-    """Run a command, show output in real-time, return CompletedProcess."""
+    """Run a command, return CompletedProcess with stdout/stderr captured.
+
+    By default, output is captured (stdout/stderr available on result).
+    Pass ``live=True`` to show output in real-time (stdout/stderr will be None).
+    ``capture=True`` is accepted for backward compatibility (redundant).
+    """
     kwargs.setdefault('text', True)
-    # Default: show live output; set capture=True to suppress
-    if not kwargs.pop('capture', False):
+    kwargs.pop('capture', None)  # legacy, always captured by default now
+    if kwargs.pop('live', False):
         return subprocess.run(cmd, **kwargs)
-    kwargs['capture_output'] = True
+    kwargs.setdefault('capture_output', True)
     return subprocess.run(cmd, **kwargs)
 
 
@@ -209,7 +214,7 @@ def deploy(non_interactive=False):
     except OSError:
         pass
     r = run([str(script), "deploy", "--deploy-confirmed", "--non-interactive",
-             "--project-dir", "/opt/greenbone-community"])
+             "--project-dir", "/opt/greenbone-community"], live=True)
     if r.returncode == 0:
         ok("Greenbone deployed successfully")
     else:
@@ -241,7 +246,7 @@ def install_backup():
         pass
     env = os.environ.copy()
     env["PYTHONPATH"] = str(repo_root) + ":" + env.get("PYTHONPATH", "")
-    r = run([sys.executable, str(local_script), "--install"], env=env)
+    r = run([sys.executable, str(local_script), "--install"], env=env, live=True)
     if r.returncode != 0:
         fail("Backup installation failed")
         return
@@ -328,7 +333,7 @@ def _configure_do():
     config_file.chmod(0o600)
 
     # Test connection with the persisted config
-    r2 = run(["rclone", "lsd", "do:testmonbck"], check=False)
+    r2 = run(["rclone", "lsd", "do:testmonbck"], capture=True, check=False)
     if r2.returncode == 0:
         ok("DO Spaces connection OK")
         # Enable upload
@@ -459,7 +464,7 @@ def do_restore():
         print(r.stdout)
         if confirm(f"Copy all backups from {remote_path} to {dest}?"):
             Path(dest).mkdir(parents=True, exist_ok=True)
-            run(["rclone", "copy", "--progress", remote_path, dest])
+            run(["rclone", "copy", "--progress", remote_path, dest], live=True)
             ok(f"Backups restored to {dest}")
         else:
             info("Restore cancelled")
@@ -477,7 +482,7 @@ def run_mode(mode: str, *args):
         return
     cmd = [str(script), mode] + list(args) + ["--project-dir", "/opt/greenbone-community"]
     info(f"Running: {' '.join(cmd)}")
-    r = run(cmd)
+    r = run(cmd, live=True)
     if r.returncode != 0:
         fail(f"Command failed (exit {r.returncode})")
 
