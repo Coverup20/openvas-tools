@@ -385,7 +385,26 @@ def do_restore():
         else:
             fail("File not found")
     elif a == "2":
-        info("Run: rclone copy do:testmonbck/greenbone-backups/ /tmp/restore/")
+        if not shutil.which("rclone"):
+            fail("rclone not installed — cannot restore from cloud")
+            return
+        dest = input("Local restore directory [/tmp/restore]: ").strip() or "/tmp/restore"
+        if Path(dest).exists():
+            if not confirm(f"Directory {dest} exists. Continue?"):
+                return
+        remote_path = "do:testmonbck/greenbone-backups"
+        info(f"Listing available backups from {remote_path} ...")
+        r = run(["rclone", "lsf", remote_path], check=False)
+        if r.returncode != 0:
+            fail(f"Cannot list {remote_path} — check rclone config and DO Spaces access")
+            return
+        print(r.stdout)
+        if confirm(f"Copy all backups from {remote_path} to {dest}?"):
+            Path(dest).mkdir(parents=True, exist_ok=True)
+            run(["rclone", "copy", "--progress", remote_path, dest])
+            ok(f"Backups restored to {dest}")
+        else:
+            info("Restore cancelled")
     else:
         return
 
