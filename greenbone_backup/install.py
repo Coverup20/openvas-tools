@@ -110,19 +110,22 @@ def install(
             shutil.copytree(pkg_src, pkg_dst, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
             log(f"Installed package: {pkg_dst}")
 
-    # 3. Create env file
+    # 3. Create / merge env file
     cfg = BackupConfig.from_env()
-    # Force safe default: upload is always 0 on install
+    # Force safe default: upload is always 0 on new install
     cfg.upload_enabled = False
 
-    if dry_run:
-        print(f"[DRY-RUN] Would write: {ENV_FILE}")
-        print(cfg.to_env_lines())
+    if ENV_FILE.exists():
+        _merge_env_file(cfg=cfg, dry_run=dry_run)
     else:
-        ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-        ENV_FILE.write_text(cfg.to_env_lines(), encoding="utf-8")
-        ENV_FILE.chmod(0o644)
-        log(f"Env file: {ENV_FILE}")
+        if dry_run:
+            print(f"[DRY-RUN] Would write: {ENV_FILE}")
+            print(cfg.to_env_lines())
+        else:
+            ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+            ENV_FILE.write_text(cfg.to_env_lines(), encoding="utf-8")
+            ENV_FILE.chmod(0o644)
+            log(f"Env file: {ENV_FILE}")
 
     # 4. Create systemd units
     install_units(dry_run=dry_run)
@@ -148,6 +151,93 @@ def install(
     log("Enable: set GREENBONE_BACKUP_UPLOAD=1 in the env file (after rclone is configured).")
 
     return 0
+
+
+def _merge_env_file(cfg, dry_run: bool = False) -> bool:
+    """Merge existing env file with new defaults, preserving existing values.
+
+    Reads the existing env file, identifies which keys from the new defaults
+    are not yet present, and appends only the missing keys.
+    Existing keys and their values are always preserved.
+
+    In dry-run mode, reports key names only — never values.
+    Creates a timestamped backup before modifying the file.
+    """
+    from datetime import datetime
+
+    if not ENV_FILE.exists():
+        warn(f"Env file not found: {ENV_FILE}")
+        return False
+
+    # Read existing content
+    existing_content = ENV_FILE.read_text(encoding="utf-8")
+
+    # Parse existing key/value pairs (values NOT exposed in output)
+    existing_keys: set = set()
+    for line in existing_content.splitlines():
+        ls = line.strip()
+        if not ls or ls.startswith("#") or "=" not in ls:
+            continue
+        key, _, _ = ls.partition("=")
+        existing_keys.add(key.strip())
+
+    # Build new full content from config
+    new_content = cfg.to_env_lines()
+
+    # Parse new keys to find which are missing in existing
+    new_keys: dict = {}
+    for line in new_content.splitlines():
+        ls = line.strip()
+        if not ls or ls.startswith("#") or "=" not in ls:
+            continue
+        key, _, val = ls.partition("=")
+        new_keys[key.strip()] = val.strip()
+
+    # Keys in new defaults but not in existing (need to be added)
+    keys_to_add = {}
+    for key, val in new_keys.items():
+        if key not in existing_keys:
+            keys_to_add[key] = val
+
+    # Report: existing keys (names only) and keys to add (names only)
+    preserved = sorted(existing_keys)
+    added = sorted(keys_to_add.keys())
+
+    if dry_run:
+        print(f"[DRY-RUN] Env file exists: {ENV_FILE}")
+        print(f"[DRY-RUN] Keys preserved: {', '.join(preserved)}")
+        if added:
+            print(f"[DRY-RUN] Keys to add: {', '.join(added)}")
+        else:
+            print("[DRY-RUN] Keys to add: (none — already up-to-date)")
+        print(f"[DRY-RUN] Backup would be created: {'yes' if added else 'no'}")
+        return True
+
+    # Nothing to add — already up-to-date
+    if not keys_to_add:
+        log("Env file already up-to-date — no changes needed.")
+        return True
+
+    # Backup existing file before modification
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    backup_path = ENV_FILE.with_name(f"greenbone-backup.env.backup_{timestamp}")
+    shutil.copy2(str(ENV_FILE), str(backup_path))
+    backup_path.chmod(0o600)
+    log(f"Backup: {backup_path}")
+
+    # Append missing keys to existing file
+    with open(str(ENV_FILE), "a", encoding="utf-8") as f:
+        f.write(f"\n# Added by greenbone_install_backup.py v0.2.0 upgrade\n")
+        for key in sorted(keys_to_add.keys()):
+            f.write(f"{key}={keys_to_add[key]}\n")
+
+    # Ensure correct permissions
+    ENV_FILE.chmod(0o644)
+
+    log(f"Env file updated: {ENV_FILE}")
+    log(f"Keys preserved: {', '.join(preserved)}")
+    log(f"Keys added: {', '.join(added)}")
+    return True
 
 
 def upgrade_env_file(dry_run: bool = False) -> bool:
