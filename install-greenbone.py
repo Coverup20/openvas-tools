@@ -445,6 +445,14 @@ def menu():
 # ── MAIN ───────────────────────────────────────────────────────────────
 
 def main():
+    # Ensure CWD is valid for the entire process lifetime.
+    # setup_host() may delete the original working directory,
+    # causing fatal errors in subprocess calls and input().
+    try:
+        os.chdir("/")
+    except OSError:
+        pass
+
     parser = argparse.ArgumentParser(description="Greenbone installer v" + VERSION)
     parser.add_argument("mode", nargs="?", default="menu",
                         choices=["setup-host", "deploy", "install-backup", "restore",
